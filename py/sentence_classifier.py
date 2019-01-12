@@ -14,7 +14,7 @@ class Config():
     n_epochs = 50
     lr = 1e-4
     embed_size = 50
-    max_gradient_norm = 1 # try with 5
+    max_gradient_norm = 1  # try with 5
     learning_rate = 0.001
 
 
