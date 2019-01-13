@@ -13,6 +13,7 @@ class DataConfig():
     parsed_questions_file = "../data/processed/parsed_questions.bin"
 
     embedding_size = 300
+    max_seq_len = 30
     include_unknown = True
     unknown_token = "<UNK>"
 
@@ -23,6 +24,14 @@ class QuoraQuestionsModel():
         self.word2idx = dict()
         self.idx2word = dict()
 
+    def load_dicts(self):
+        f = open(self.config.dict_file, 'rb')
+        self.word2idx = pickle.Unpickler(f).load()
+        self.idx2wod = {val: key for key, val in self.word2idx.items()}
+        f.close()
+
+
+class QuoraQuestionsModelParser(QuoraQuestionsModel):
     def construct_dict(self):
         """ Constructs word2idx dict from Glove pretrained embeddings and writes
         it to word2idx.txt file in data directory of the project.
@@ -40,12 +49,6 @@ class QuoraQuestionsModel():
         pickle.Pickler(fo, 4).dump(word2idx)
         fi.close()
         fo.close()
-
-    def load_dicts(self):
-        f = open(self.config.dict_file, 'rb')
-        self.word2idx = pickle.Unpickler(f).load()
-        self.idx2wod = {val: key for key, val in self.word2idx.items()}
-        f.close()
 
     def construct_embedding(self):
         """ Creates embedding matrix from input file and writes to binary file
@@ -124,8 +127,25 @@ class QuoraQuestionsModel():
         with open(self.config.parsed_questions_file, 'wb') as fo:
             pickle.Pickler(fo, 4).dump(parsed_questions)
 
-    def get_embedding(self):
-        pass
+
+class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
+    def __init__(self, data_config):
+        self.config = data_config
+        self.word2idx = dict()
+        self.idx2word = dict()
+
+    def sample_generator():
+        """Yields sequence, sequence length, and label.
+        """
+
+
+    def batch_generator():
+        """Yields
+        batch input: numpy 2D array of shape (batch_size, max_seq_len,
+                                            embedding_size)
+        labels: numpy 2D array of shape (batch_size, )
+        sequence lengths: numpy 2D array of shape (batch_size, )
+        """
 
 
 def main():
@@ -133,7 +153,7 @@ def main():
     #data_model.construct_dict()
     #data_model.construct_embedding()
     #data_model.add_unknown_token()
-    data_model.sentences_2_idxs()
+    #data_model.sentences_2_idxs()
 
 
 if __name__ == '__main__':

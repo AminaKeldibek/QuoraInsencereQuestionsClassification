@@ -21,7 +21,6 @@ class Config():
 class SentenceClassifier():
     def __init__(self, config):
         self.config = config
-        self.batch_seq_length = None
 
     def add_placeholders(self):
         """Generates placeholder variables to represent the input tensors.
@@ -40,10 +39,12 @@ class SentenceClassifier():
             (None, self.config.max_time, self.config.embed_size),
             "input"
         )
+        self.batch_seq_length = tf.placeholder(tf.int32, (None, ), "dropout")
         self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
         self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
 
-    def create_feed_dict(self, inputs_batch, labels_batch=None, dropout=1):
+    def create_feed_dict(self, inputs_batch, batch_seq_length,
+                         labels_batch=None, dropout=1):
         """Creates the feed_dict for training the given step.
         If label_batch is None, then no labels are added to feed_dict
 
@@ -57,6 +58,7 @@ class SentenceClassifier():
         """
         feed_dict = dict()
         feed_dict[self.input_placeholder] = inputs_batch
+        feed_dict[self.batch_seq_length_placeholder] = batch_seq_length
         feed_dict[self.dropout_placeholder] = dropout
         if labels_batch:
             feed_dict[self.labels_placeholder] = labels_batch
@@ -122,9 +124,8 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
         outputs, state = tf.nn.dynamic_rnn(
             cell=rnn_cell,
             inputs=self.input_placeholder,
-            sequence_length=self.batch_seq_length,
-            initial_state=initial_state,
-            parallel_iterations=32
+            sequence_length=self.batch_seq_length_placeholder,
+            initial_state=initial_state
         )
         self.W_ho = tf.get_variable(
             "W_ho",
