@@ -29,6 +29,7 @@ class SentenceClassifier():
         self.pred = self.add_prediction_op()
         self.loss = self.add_loss_op(self.pred)
         self.train_op = self.add_training_op(self.loss)
+        self.loss_summary = self.add_summary_nodes()
 
     def add_placeholders(self):
         """Generates placeholder variables to represent the input tensors.
@@ -111,6 +112,11 @@ class SentenceClassifier():
 
         return optimizer
 
+    def add_summary_nodes(self):
+        loss_summary = tf.summary.scalar("loss_summary", self.loss)
+
+        return loss_summary
+
 
 class SentenceClassifierSeq2Seq(SentenceClassifier):
     def add_prediction_op(self):
@@ -135,20 +141,22 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
             sequence_length=self.batch_seq_length_placeholder,
             initial_state=initial_state
         )
-        self.W_ho = tf.get_variable(
-            "W_ho",
-            (self.config.rnn_hidden_size, self.config.n_classes),
-            tf.float32,
-            tf.contrib.layers.xavier_initializer(),
-            trainable=True
-        )
-        self.b_o = tf.get_variable(
-            "bo",
-            (1, self.config.n_classes),
-            tf.float32, tf.zeros_initializer(),
-            trainable=True
-        )
-        pred = tf.matmul(state, self.W_ho) + self.b_o
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (self.config.rnn_hidden_size, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(state, self.W_ho) + self.b_o
 
         return pred
 

@@ -15,17 +15,24 @@ classifier_graph = tf.Graph()
 with classifier_graph.as_default():
     classifier.build()
     init = tf.initializers.global_variables()
+    merged_summaries = tf.summary.merge_all()
 
 sess = tf.Session(graph=classifier_graph)
 sess.run(init)
+writer = tf.summary.FileWriter("logdir", classifier_graph)
 
 for i in range(classifier.config.n_epochs):
     start = time.time()
     inputs, seq_length, labels = next(batch_generator)
     feed_dict = classifier.create_feed_dict(inputs, seq_length, labels)
-    loss, _ = sess.run([classifier.loss, classifier.train_op], feed_dict)
+    loss, _, summary = sess.run(
+        [classifier.loss, classifier.train_op, merged_summaries],
+        feed_dict
+    )
+    writer.add_summary(summary, i)
     print ("Loss after epoch #" + str(i) + "is " + str(loss))
     end = time.time()
     print ("Elapsed time for one epoch is " + str(end - start))
 
+writer.close()
 sess.close()
