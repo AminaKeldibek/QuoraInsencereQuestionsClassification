@@ -2,6 +2,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import nltk
+import time
 
 
 class DataConfig():
@@ -9,11 +10,10 @@ class DataConfig():
     dict_file = '../data/processed/word2idx.txt'
     embedding_file = '../data/processed/embedding.bin'
     train_file = "../data/train.csv"
-    labels_file = "../data/processed/labels.bin"
-    parsed_questions_file = "../data/processed/parsed_questions.bin"
+    parsed_train_file = "../data/processed/parsed_train.txt"
 
     embedding_size = 300
-    max_seq_len = 30
+    max_seq_len = 50
     include_unknown = True
     unknown_token = "<UNK>"
 
@@ -23,6 +23,7 @@ class QuoraQuestionsModel():
         self.config = data_config
         self.word2idx = dict()
         self.idx2word = dict()
+        self.embedding = None
 
     def load_dicts(self):
         f = open(self.config.dict_file, 'rb')
@@ -100,32 +101,26 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         Creates 2 binary files:
         questions.bin: list of lists containing token indexes (integers)
 
-        labels.bin: list of integers, corressponding class of # QUESTION:
+        labels.bin: list of integers, corressponding class of quora question
         """
-        parsed_questions = []
-
         labels = pd.read_csv(self.config.train_file, usecols=["target"])
         labels = list(labels.values[:, 0])
         questions = pd.read_csv("../data/train.csv", usecols=["question_text"],
                                 index_col=False)
         self.load_dicts()
-
-        with open(self.config.labels_file, 'wb') as fo:
-            pickle.Pickler(fo, 4).dump(labels)
-        del labels
-
         unk_idx = self.word2idx[self.config.unknown_token]
-        for quest in questions.question_text:
-            tokens = nltk.word_tokenize(quest.lower())
-            if self.config.include_unknown:
-                idxs = [self.word2idx.get(token, unk_idx) for token in tokens]
-            else:
-                idxs = [self.word2idx.get(token) for token in tokens]
-                idxs = [idx for idx in idxs if idx]
-            parsed_questions.append(idxs)
 
-        with open(self.config.parsed_questions_file, 'wb') as fo:
-            pickle.Pickler(fo, 4).dump(parsed_questions)
+        with open(self.config.parsed_train_file, 'w') as fo:
+            for label, quest in zip(labels, questions.question_text):
+                tokens = nltk.word_tokenize(quest.lower())
+                if self.config.include_unknown:
+                    idxs = [self.word2idx.get(token, unk_idx) for token in
+                            tokens]
+                else:
+                    idxs = [self.word2idx.get(token) for token in tokens]
+                    idxs = [idx for idx in idxs if idx]
+                fo.write(str(" ".join(str(num) for num in idxs)) + " " +
+                         str(label) + "\n")
 
 
 class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
@@ -134,27 +129,56 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         self.word2idx = dict()
         self.idx2word = dict()
 
-    def sample_generator():
+    def sample_generator(self):
         """Yields sequence, sequence length, and label.
         """
+        fi = open(self.config.parsed_train_file)
+        for line in fi:
+            list_line = line.split(" ")
+            label = int(list_line[-1])
+            sequence = np.array(list_line[:-1], dtype=np.intp)
+            yield sequence, sequence.shape[0], label
 
-
-    def batch_generator():
+    def batch_generator(self, batch_size):
         """Yields
-        batch input: numpy 2D array of shape (batch_size, max_seq_len,
+        input: numpy 2D array of shape (batch_size, max_seq_len,
                                             embedding_size)
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
+        sample_gen = self.sample_generator()
+        self.embedding = np.load(self.config.embedding_file)
+
+        labels = np.zeros((batch_size), dtype=np.intp)
+        seq_lengths = np.zeros((batch_size), dtype=np.intp)
+
+        while True:
+            input = np.zeros((batch_size, self.config.max_seq_len,
+                              self.config.embedding_size))
+            for i in range(batch_size):
+                sequence, seq_lengths[i], labels[i] = next(sample_gen)
+                if seq_lengths[i] > self.config.max_seq_len:
+                    seq_lengths[i] = self.config.max_seq_len
+                    sequence = sequence[:seq_lengths[i]]
+                input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
+            yield input, seq_lengths, labels
 
 
-def main():
-    data_model = QuoraQuestionsModel(DataConfig())
-    #data_model.construct_dict()
-    #data_model.construct_embedding()
-    #data_model.add_unknown_token()
-    #data_model.sentences_2_idxs()
+def main_parser():
+    data_model = QuoraQuestionsModelParser(DataConfig())
+    data_model.sentences_2_idxs()
+
+
+def main_streamer():
+    data_model = QuoraQuestionsModelStreamer(DataConfig())
+    gen = data_model.batch_generator(2)
+
+    for i in range(2):
+        start = time.time()
+        print (next(gen))
+        end = time.time()
+        print ("elapsed time" + str(end - start))
 
 
 if __name__ == '__main__':
-    main()
+    main_streamer()
