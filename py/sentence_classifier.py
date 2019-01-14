@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 
-class Config():
+class ModelConfig():
     """Holds model hyperparams and data information.
 
     The config class is used to store various hyperparameters and dataset
@@ -11,16 +11,24 @@ class Config():
     """
     n_classes = 2
     batch_size = pow(2, 6)
-    n_epochs = 50
+    n_epochs = 2
     lr = 1e-4
-    embed_size = 50
     max_gradient_norm = 1  # try with 5
     learning_rate = 0.001
+    max_seq_len = 50
+    embedding_size = 300
+    rnn_hidden_size = 64
 
 
 class SentenceClassifier():
     def __init__(self, config):
         self.config = config
+
+    def build(self):
+        self.add_placeholders()
+        self.pred = self.add_prediction_op()
+        self.loss = self.add_loss_op(self.pred)
+        self.train_op = self.add_training_op(self.loss)
 
     def add_placeholders(self):
         """Generates placeholder variables to represent the input tensors.
@@ -28,18 +36,19 @@ class SentenceClassifier():
         Adds following nodes to the computational graph:
 
         input_placeholder: Input placeholder tensor of shape (None,
-                           max_time, embed_size), type tf.float32
+                           max_seq_len, embedding_size), type tf.float32
         labels_placeholder: Labels placeholder tensor of shape (None),
                             type tf.int32
         dropout_placeholder: Dropout value placeholder of shape (), i.e.
                              scalar, type tf.float32
         """
         self.input_placeholder = tf.placeholder(
-            tf.int32,
-            (None, self.config.max_time, self.config.embed_size),
+            tf.float32,
+            (None, self.config.max_seq_len, self.config.embedding_size),
             "input"
         )
-        self.batch_seq_length = tf.placeholder(tf.int32, (None, ), "dropout")
+        self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
+                                                           "batch_seq_length")
         self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
         self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
 
@@ -60,8 +69,7 @@ class SentenceClassifier():
         feed_dict[self.input_placeholder] = inputs_batch
         feed_dict[self.batch_seq_length_placeholder] = batch_seq_length
         feed_dict[self.dropout_placeholder] = dropout
-        if labels_batch:
-            feed_dict[self.labels_placeholder] = labels_batch
+        feed_dict[self.labels_placeholder] = labels_batch
 
         return feed_dict
 

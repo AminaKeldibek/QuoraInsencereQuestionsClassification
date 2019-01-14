@@ -8,7 +8,7 @@ import time
 class DataConfig():
     pretrained_vectors_file = '../data/glove.840B.300d.txt'
     dict_file = '../data/processed/word2idx.txt'
-    embedding_file = '../data/processed/embedding.bin'
+    embedding_file = '../data/processed/embedding.npy'
     train_file = "../data/train.csv"
     parsed_train_file = "../data/processed/parsed_train.txt"
 
@@ -16,6 +16,7 @@ class DataConfig():
     max_seq_len = 50
     include_unknown = True
     unknown_token = "<UNK>"
+    embedding_sample_size = 10000
 
 
 class QuoraQuestionsModel():
@@ -57,29 +58,23 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         """
         i = 0
         self.load_dicts()
-        self.embedding_shape = (max(self.word2idx.values()) + 1,
-                                self.config.embedding_size)
-        self.embedding = np.zeros(self.embedding_shape)
+        embedding_shape = (max(self.word2idx.values()) + 1,
+                           self.config.embedding_size)
+        embedding = np.zeros(embedding_shape)
 
-        fi = open(self.config.pretrained_vectors_file, 'r')
-        fo = open(self.config.embedding_file, 'wb')
+        with open(self.config.pretrained_vectors_file, 'r') as fi:
+            for line in fi:
+                word_vec = line.split(" ")[1:]
+                embedding[i, :] = np.array(word_vec, dtype=np.float32)
+                i += 1
 
-        for line in fi:
-            word_vec = line.split(" ")[1:]
-            self.embedding[i, :] = np.array(word_vec, dtype=np.float32)
-            i += 1
-
-        np.save(fo, self.embedding)
-        fi.close()
-        fo.close()
+        np.save(self.config.embedding_file, embedding)
 
     def add_unknown_token(self):
         """Adds unknown token to word2idx dictionary and computes vector as an
         average of random sample as suggested by Pennington
         (https://groups.google.com/forum/#!searchin/globalvectors/unk|sort:date/globalvectors/9w8ZADXJclA/hRdn4prm-XUJ)
         """
-        samples_size = 10
-
         with open(self.config.dict_file, 'rb') as fi:
             word2idx = pickle.Unpickler(fi).load()
 
@@ -88,7 +83,8 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
             pickle.Pickler(fi, 4).dump(word2idx)
 
         embedding = np.load(self.config.embedding_file)
-        sample_idxs = np.random.randint(0, embedding.shape[0], samples_size)
+        sample_idxs = np.random.randint(0, embedding.shape[0],
+                                        self.config.embedding_sample_size)
         unknown_vector = np.mean(embedding[sample_idxs, :], axis=0)
         embedding = np.vstack((embedding, unknown_vector))
         np.save(self.config.embedding_file, embedding)
@@ -166,7 +162,10 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
 def main_parser():
     data_model = QuoraQuestionsModelParser(DataConfig())
-    data_model.sentences_2_idxs()
+    #data_model.construct_dict()
+    #data_model.construct_embedding()
+    #data_model.add_unknown_token()
+    #data_model.sentences_2_idxs()
 
 
 def main_streamer():
@@ -181,4 +180,5 @@ def main_streamer():
 
 
 if __name__ == '__main__':
+    main_parser()
     main_streamer()
