@@ -1,5 +1,4 @@
 import tensorflow as tf
-import time
 
 from data_model import QuoraQuestionsModelStreamer, DataConfig
 from sentence_classifier import SentenceClassifierSeq2Seq, ModelConfig
@@ -7,32 +6,31 @@ from sentence_classifier import SentenceClassifierSeq2Seq, ModelConfig
 
 data_model = QuoraQuestionsModelStreamer(DataConfig())
 classifier = SentenceClassifierSeq2Seq(ModelConfig())
+batch_generator = data_model.train_batch_generator(classifier.config.batch_size)
 
-batch_generator = data_model.batch_generator(classifier.config.batch_size)
+graph = tf.Graph()
 
-classifier_graph = tf.Graph()
-
-with classifier_graph.as_default():
+with graph.as_default():
     classifier.build()
-    init = tf.initializers.global_variables()
+    init = (tf.initializers.global_variables(),
+            tf.initializers.local_variables())
     merged_summaries = tf.summary.merge_all()
 
-sess = tf.Session(graph=classifier_graph)
+sess = tf.Session(graph=graph)
 sess.run(init)
-writer = tf.summary.FileWriter("logdir", classifier_graph)
+writer = tf.summary.FileWriter("logdir", graph)
 
 for i in range(classifier.config.n_epochs):
-    start = time.time()
     inputs, seq_length, labels = next(batch_generator)
     feed_dict = classifier.create_feed_dict(inputs, seq_length, labels)
-    loss, _, summary = sess.run(
-        [classifier.loss, classifier.train_op, merged_summaries],
+    loss, metric, _, summary = sess.run(
+        [classifier.loss, classifier.metric_update_op, classifier.train_op,
+         merged_summaries],
         feed_dict
     )
     writer.add_summary(summary, i)
-    print ("Loss after epoch #" + str(i) + "is " + str(loss))
-    end = time.time()
-    print ("Elapsed time for one epoch is " + str(end - start))
+    if i % 100 == 0:
+        print ("Loss/f1_score after epoch #{0} is {1} / {2}".format(i, loss, metric))
 
 writer.close()
 sess.close()

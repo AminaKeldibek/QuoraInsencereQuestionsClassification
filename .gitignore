@@ -5,3 +5,4 @@ py/.ipynb_checkpoints/
 py/__pycache__/
 *.txt
 data/
+py/logdir/

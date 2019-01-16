@@ -10,14 +10,13 @@ class ModelConfig():
     get the hyperparameter settings.
     """
     n_classes = 2
-    batch_size = pow(2, 6)
-    n_epochs = 2
-    lr = 1e-4
+    batch_size = pow(2, 7)
+    n_epochs = 500
     max_gradient_norm = 1  # try with 5
-    learning_rate = 0.001
+    learning_rate = 1e-4
     max_seq_len = 50
     embedding_size = 300
-    rnn_hidden_size = 64
+    rnn_hidden_size = 150
 
 
 class SentenceClassifier():
@@ -29,7 +28,8 @@ class SentenceClassifier():
         self.pred = self.add_prediction_op()
         self.loss = self.add_loss_op(self.pred)
         self.train_op = self.add_training_op(self.loss)
-        self.loss_summary = self.add_summary_nodes()
+        self.batch_eval_metric, self.metric_update_op = self.add_eval_op(self.pred)
+        self.add_summary_nodes()
 
     def add_placeholders(self):
         """Generates placeholder variables to represent the input tensors.
@@ -112,10 +112,15 @@ class SentenceClassifier():
 
         return optimizer
 
-    def add_summary_nodes(self):
-        loss_summary = tf.summary.scalar("loss_summary", self.loss)
+    def add_eval_op(self, pred):
+        """Creates an evaluator of classifier"""
+        eval_metric = None
+        return eval_metric
 
-        return loss_summary
+
+    def add_summary_nodes(self):
+        self.loss_summary = tf.summary.scalar("loss_summary", self.loss)
+        self.eval_summary = tf.summary.scalar("f1_summary", self.metric_update_op)
 
 
 class SentenceClassifierSeq2Seq(SentenceClassifier):
@@ -201,3 +206,13 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
         optimizer = optimizer.apply_gradients(zip(clipped_gradients, params))
 
         return optimizer
+
+    def add_eval_op(self, pred):
+        """Creates an evaluator of classifier"""
+        f1_score, metric_update_op = tf.contrib.metrics.f1_score(
+            self.labels_placeholder,
+            tf.slice(tf.nn.softmax(self.pred), [0, 0], [-1, 1]),
+            name='f1_score'
+        )
+
+        return f1_score, metric_update_op
