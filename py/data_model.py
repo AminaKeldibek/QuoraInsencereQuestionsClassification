@@ -3,33 +3,34 @@ import numpy as np
 import pandas as pd
 import nltk
 import utils
-
+import time
 import random
 random.seed(1)
 
-import time
-
 
 class DataConfig():
-    pretrained_vectors_file = '../data/glove.840B.300d.txt'
-    dict_file = '../data/processed/word2idx.txt'
-    embedding_file = '../data/processed/embedding.npy'
-    train_file = "../data/train.csv"
-    parsed_train_file_pos = "../data/processed/parsed_train_pos.txt"
-    parsed_train_file_neg = "../data/processed/parsed_train_neg.txt"
+    def __init__(self, batch_size):
+        self.pretrained_vectors_file = '../data/glove.840B.300d.txt'
+        self.dict_file = '../data/processed/word2idx.txt'
+        self.embedding_file = '../data/processed/embedding.npy'
+        self.train_file = "../data/train.csv"
+        self.parsed_train_file_pos = "../data/processed/parsed_train_pos.txt"
+        self.parsed_train_file_neg = "../data/processed/parsed_train_neg.txt"
 
-    train_dir = "../data/processed/train/"
-    dev_dir = "../data/processed/dev/"
-    test_dir = "../data/processed/test/"
+        self.train_dir = "../data/processed/train/"
+        self.dev_dir = "../data/processed/dev/"
+        self.test_dir = "../data/processed/test/"
 
-    embedding_size = 300
-    max_seq_len = 50
-    include_unknown = True
-    unknown_token = "<UNK>"
-    embedding_sample_size = 10000
+        self.embedding_size = 300
+        self.max_seq_len = 50
+        self.include_unknown = True
+        self.unknown_token = "<UNK>"
+        self.embedding_sample_size = 10000
 
-    dev_ratio = 0.05
-    test_ratio = 0.05
+        self.dev_ratio = 0.05
+        self.test_ratio = 0.05
+
+        self.batch_size = batch_size
 
 
 class QuoraQuestionsModel():
@@ -108,9 +109,11 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         is true, then replaces with corressponding index, ignores otherwise.
 
         Creates 2 binary files:
-        parsed_train_pos.txt: list of lists containing token indexes (integers) of positive class
+        parsed_train_pos.txt: list of lists containing token indexes (integers)
+                              of positive class
 
-        parsed_train_neg.txt: list of lists containing token indexes (integers) of negative class
+        parsed_train_neg.txt: list of lists containing token indexes (integers)
+                              of negative class
         """
         fo_pos = open(self.config.parsed_train_file_pos, 'w')
         fo_neg = open(self.config.parsed_train_file_neg, 'w')
@@ -212,7 +215,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             sequence = np.array(line_list[:-1], dtype=np.intp)
             yield sequence, sequence.shape[0], label
 
-    def train_batch_generator(self, batch_size):
+    def train_batch_generator(self):
         """Generates train batches by randomly selecting labels from both
         classes to avoid imbalance.
         Yields
@@ -230,13 +233,13 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         )
 
         self.embedding = np.load(self.config.embedding_file)
-        seq_lengths = np.zeros((batch_size), dtype=np.intp)
+        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
 
         while True:
-            input = np.zeros((batch_size, self.config.max_seq_len,
+            input = np.zeros((self.config.batch_size, self.config.max_seq_len,
                               self.config.embedding_size))
-            labels = np.random.randint(0, 2, batch_size, np.intp)
-            for i in range(batch_size):
+            labels = np.random.randint(0, 2, self.config.batch_size, np.intp)
+            for i in range(self.config.batch_size):
                 if labels[i] == 1:
                     sequence, seq_lengths[i] = next(sample_gen_pos)
                 else:
@@ -250,7 +253,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         map(lambda fi: fi.close(), (fi_pos, fi_neg))
 
-    def test_batch_generator(self, batch_size, dir_name):
+    def test_batch_generator(self, dir_name):
         """Generates test batches from all.txt in test/ or dev/ directories
         where samples are shuffled and labeled.
         Yields
@@ -263,13 +266,13 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         sample_gen = self.labeled_sample_generator(fi)
 
         self.embedding = np.load(self.config.embedding_file)
-        seq_lengths = np.zeros((batch_size), dtype=np.intp)
-        labels = np.zeros((batch_size), dtype=np.intp)
+        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        labels = np.zeros((self.config.batch_size), dtype=np.intp)
 
         while True:
-            input = np.zeros((batch_size, self.config.max_seq_len,
+            input = np.zeros((self.config.batch_size, self.config.max_seq_len,
                               self.config.embedding_size))
-            for i in range(batch_size):
+            for i in range(self.config.batch_size):
                 sequence, seq_lengths[i], labels[i] = next(sample_gen)
                 if seq_lengths[i] > self.config.max_seq_len:
                     seq_lengths[i] = self.config.max_seq_len
@@ -281,19 +284,18 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
 
 def main_parser():
-    #data_model = QuoraQuestionsModelParser(DataConfig())
-    #data_model.construct_dict()
-    #data_model.construct_embedding()
-    #data_model.add_unknown_token()
-    #data_model.sentences_2_idxs()
-    #data_model.split_train_test_dev()
-    #data_model.merge_pos_neg()
-    pass
+    '''data_model = QuoraQuestionsModelParser(DataConfig())
+    data_model.construct_dict()
+    data_model.construct_embedding()
+    data_model.add_unknown_token()
+    data_model.sentences_2_idxs()
+    data_model.split_train_test_dev()
+    data_model.merge_pos_neg()'''
 
 
 def main_streamer():
     data_model = QuoraQuestionsModelStreamer(DataConfig())
-    gen = data_model.test_batch_generator(4, data_model.config.dev_dir)
+    gen = data_model.test_batch_generator(data_model.config.dev_dir)
 
     for i in range(2):
         start = time.time()

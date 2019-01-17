@@ -9,14 +9,17 @@ class ModelConfig():
     instantiation. They can then call self.config.<hyperparameter_name> to
     get the hyperparameter settings.
     """
-    n_classes = 2
-    batch_size = pow(2, 7)
-    n_epochs = 500
-    max_gradient_norm = 1  # try with 5
-    learning_rate = 1e-4
-    max_seq_len = 50
-    embedding_size = 300
-    rnn_hidden_size = 150
+
+    def __init__(self, batch_size):
+        self.n_classes = 2
+        self.n_epochs = 500
+        self.max_gradient_norm = 1  # try with 5
+        self.learning_rate = 1e-4
+        self.max_seq_len = 50
+        self.embedding_size = 300
+        self.rnn_hidden_size = 150
+        self.batch_size = batch_size
+        self.save_path = "saved/model.ckpt"
 
 
 class SentenceClassifier():
@@ -25,11 +28,16 @@ class SentenceClassifier():
 
     def build(self):
         self.add_placeholders()
+        self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False,
+                                       name='global_step')
         self.pred = self.add_prediction_op()
         self.loss = self.add_loss_op(self.pred)
-        self.train_op = self.add_training_op(self.loss)
+        self.train_op = self.add_training_op(self.loss, self.global_step)
         self.batch_eval_metric, self.metric_update_op = self.add_eval_op(self.pred)
+
         self.add_summary_nodes()
+        self.merged_summaries = tf.summary.merge_all()
+        self.saver = tf.train.Saver()
 
     def add_placeholders(self):
         """Generates placeholder variables to represent the input tensors.
@@ -117,10 +125,36 @@ class SentenceClassifier():
         eval_metric = None
         return eval_metric
 
-
     def add_summary_nodes(self):
         self.loss_summary = tf.summary.scalar("loss_summary", self.loss)
         self.eval_summary = tf.summary.scalar("f1_summary", self.metric_update_op)
+
+    def fit(self, sess, inputs, seq_length, labels):
+        feed_dict = self.create_feed_dict(inputs, seq_length, labels)
+
+        loss, metric, _, summary = sess.run(
+            [self.loss, self.metric_update_op, self.train_op,
+             self.merged_summaries],
+            feed_dict
+        )
+
+        return loss, metric, summary
+
+    def evaluate(self, data_gen):
+        """IMPLEMENT ME!!!"""
+        score = None
+        labels = None
+        return score, labels
+
+    def save_best(self, sess, score, labels):
+        """IMPLEMENT ME!!!"""
+        path_prefix = self.saver.save(sess, self.config.save_path,
+                                      self.global_step)
+        return path_prefix
+
+    def predict(self):
+        """IMPLEMENT ME!!!"""
+        pass
 
 
 class SentenceClassifierSeq2Seq(SentenceClassifier):
@@ -184,7 +218,7 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
 
         return loss
 
-    def add_training_op(self, loss):
+    def add_training_op(self, loss, global_step):
         """Creates an optimizer and applies the gradients to all trainable
         variables.
         Args:
@@ -203,7 +237,8 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
 
         # Optimization
         optimizer = tf.train.AdamOptimizer(self.config.learning_rate)
-        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params))
+        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
+                                              global_step, "adam_optimizer")
 
         return optimizer
 
