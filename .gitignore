@@ -6,3 +6,6 @@ py/__pycache__/
 *.txt
 data/
 py/logdir/
+py/log/
+py/saved/
+py/test.py

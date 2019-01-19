@@ -5,11 +5,13 @@ import nltk
 import utils
 import time
 import random
+
 random.seed(1)
+np.random.seed(1)
 
 
 class DataConfig():
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, max_seq_len):
         self.pretrained_vectors_file = '../data/glove.840B.300d.txt'
         self.dict_file = '../data/processed/word2idx.txt'
         self.embedding_file = '../data/processed/embedding.npy'
@@ -22,7 +24,7 @@ class DataConfig():
         self.test_dir = "../data/processed/test/"
 
         self.embedding_size = 300
-        self.max_seq_len = 50
+        self.max_seq_len = max_seq_len
         self.include_unknown = True
         self.unknown_token = "<UNK>"
         self.embedding_sample_size = 10000
@@ -45,6 +47,10 @@ class QuoraQuestionsModel():
         self.word2idx = pickle.Unpickler(f).load()
         self.idx2wod = {val: key for key, val in self.word2idx.items()}
         f.close()
+
+    def load_embedding(self):
+        if self.embedding is None:
+            self.embedding = np.load(self.config.embedding_file)
 
 
 class QuoraQuestionsModelParser(QuoraQuestionsModel):
@@ -188,12 +194,7 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
 
 
 class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
-    def __init__(self, data_config):
-        self.config = data_config
-        self.word2idx = dict()
-        self.idx2word = dict()
-
-    def sample_generator(self, fi):
+    def train_sample_generator(self, fi):
         """Yields sequence, sequence length from input file."""
         while True:
             line = fi.readline()
@@ -204,12 +205,12 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             yield sequence, sequence.shape[0]
 
     def labeled_sample_generator(self, fi):
-        """Yields sequence, sequence length, and label from input file."""
-        while True:
-            line = fi.readline()
-            if not line:
-                fi.seek(0)
-                continue
+        """Yields sequence, sequence length, and label from input file.
+
+        Args:
+            fi: file object opened for reading
+        """
+        for line in fi:
             line_list = line.split(" ")
             label = int(line_list[-1])
             sequence = np.array(line_list[:-1], dtype=np.intp)
@@ -224,16 +225,15 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
+        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
         fis = (self.config.train_dir + "pos.txt",
                self.config.train_dir + "neg.txt")
         fi_pos, fi_neg = map(open, fis)
         sample_gen_pos, sample_gen_neg = map(
-            lambda fi: self.sample_generator(fi),
+            lambda fi: self.train_sample_generator(fi),
             (fi_pos, fi_neg)
         )
-
-        self.embedding = np.load(self.config.embedding_file)
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        self.load_embedding()
 
         while True:
             input = np.zeros((self.config.batch_size, self.config.max_seq_len,
@@ -262,48 +262,61 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        fi = open(dir_name + "all.txt")
-        sample_gen = self.labeled_sample_generator(fi)
-
-        self.embedding = np.load(self.config.embedding_file)
+        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
+                          self.config.embedding_size))
         seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
         labels = np.zeros((self.config.batch_size), dtype=np.intp)
+        i = 0
 
-        while True:
-            input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                              self.config.embedding_size))
-            for i in range(self.config.batch_size):
-                sequence, seq_lengths[i], labels[i] = next(sample_gen)
-                if seq_lengths[i] > self.config.max_seq_len:
-                    seq_lengths[i] = self.config.max_seq_len
-                    sequence = sequence[:seq_lengths[i]]
-                input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
-            yield input, seq_lengths, labels
+        fi = open(dir_name + "all.txt")
+        sample_gen = self.labeled_sample_generator(fi)
+        self.load_embedding()
+
+        for sequence, seq_length, label in sample_gen:
+            seq_lengths[i], labels[i] = seq_length, label
+            if seq_lengths[i] > self.config.max_seq_len:
+                seq_lengths[i] = self.config.max_seq_len
+                sequence = sequence[:seq_lengths[i]]
+            input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
+
+            i += 1
+
+            if i == self.config.batch_size:
+                yield input, seq_lengths, labels
+                input = np.zeros(
+                    (self.config.batch_size, self.config.max_seq_len,
+                     self.config.embedding_size)
+                )
+                i = 0
+
+        if i < self.config.batch_size:
+            yield input[:i, :, :], seq_lengths[:i], labels[:i]
 
         fi.close()
 
 
 def main_parser():
-    '''data_model = QuoraQuestionsModelParser(DataConfig())
+    data_model = QuoraQuestionsModelParser(DataConfig())
     data_model.construct_dict()
     data_model.construct_embedding()
     data_model.add_unknown_token()
     data_model.sentences_2_idxs()
     data_model.split_train_test_dev()
-    data_model.merge_pos_neg()'''
+    data_model.merge_pos_neg()
 
 
 def main_streamer():
-    data_model = QuoraQuestionsModelStreamer(DataConfig())
+    data_model = QuoraQuestionsModelStreamer(DataConfig(2))
     gen = data_model.test_batch_generator(data_model.config.dev_dir)
 
-    for i in range(2):
+    for input, length, label in gen:
         start = time.time()
-        print (next(gen))
+        print ((input.shape, length, label))
         end = time.time()
         print ("elapsed time" + str(end - start))
 
 
 if __name__ == '__main__':
-    main_parser()
-    main_streamer()
+    #main_parser()
+    #main_streamer()
+    pass
