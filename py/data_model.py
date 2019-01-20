@@ -33,6 +33,7 @@ class DataConfig():
         self.test_ratio = 0.05
 
         self.batch_size = batch_size
+        self.class_probs = [0.9, 0.1]
 
 
 class QuoraQuestionsModel():
@@ -238,7 +239,8 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         while True:
             input = np.zeros((self.config.batch_size, self.config.max_seq_len,
                               self.config.embedding_size))
-            labels = np.random.randint(0, 2, self.config.batch_size, np.intp)
+            labels = np.random.choice([0, 1], self.config.batch_size,
+                                      p=self.config.class_probs)
             for i in range(self.config.batch_size):
                 if labels[i] == 1:
                     sequence, seq_lengths[i] = next(sample_gen_pos)

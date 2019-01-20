@@ -64,15 +64,32 @@ def test_model(path_prefix):
         sess,
         data_model.test_batch_generator(data_model.config.test_dir)
     )
-    print ("Test f1_score is {0}".format(score))
+    print (f"Test f1_score is {score:.2f}")
 
     sess.close()
 
 
 def predict():
-    pass
+    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+
+    graph = tf.Graph()
+    with graph.as_default():
+        classifier.build()
+        init = tf.initializers.global_variables()  # restore best graph vars
+
+    sess = tf.Session(graph=graph)
+    sess.run(init)
+    classifier.saver.restore(sess, path_prefix)
+
+    score, labels = classifier.predict(
+        sess,
+        data_model.test_batch_generator(data_model.config.test_dir)
+    )
+
+    sess.close()
 
 
 if __name__ == '__main__':
     train_model()
-    #test_model("saved/classifier.ckpt-4501")
+    #test_model("saved/classifier.ckpt-5001")

@@ -17,7 +17,7 @@ class ModelConfig():
     def __init__(self, batch_size, max_seq_len):
         self.n_classes = 2
         self.max_gradient_norm = 1  # try with 5
-        self.learning_rate = 1e-4
+        self.learning_rate = 5e-4
         self.embedding_size = 300
         self.rnn_hidden_size = 150
         self.dropout = 0
@@ -213,24 +213,50 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
-        rnn_cell = tf.nn.rnn_cell.BasicRNNCell(self.config.rnn_hidden_size)
-        rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
-            rnn_cell,
-            input_keep_prob=0.9,
-            output_keep_prob=1.0,
-            state_keep_prob=0.6
+        #rnn_cell = tf.nn.rnn_cell.BasicRNNCell(self.config.rnn_hidden_size)
+
+        '''rnn_cell = tf.nn.rnn_cell.GRUCell(
+            self.config.rnn_hidden_size,
+            #activation=None,
+            #reuse=None,
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru",
+            dtype=tf.float32
+        )'''
+
+        rnn_cell = tf.nn.rnn_cell.LSTMCell(
+            num_units=self.config.rnn_hidden_size,
+            use_peepholes=False,
+            #cell_clip=None,
+            initializer=tf.contrib.layers.xavier_initializer(),
+            num_proj=None,
+            #proj_clip=None,
+            #forget_bias=1.0,
+            state_is_tuple=True,
+            #activation=None,
+            #reuse=None,
+            name="lstm",
+            dtype=tf.float32
         )
+
+        '''rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
+            rnn_cell,
+            input_keep_prob=1.0,
+            output_keep_prob=1.0,
+            state_keep_prob=0.8
+        )'''
         #initial_state = rnn_cell.zero_state(batch_size = None, dtype=tf.float32)
 
         outputs, state = tf.nn.dynamic_rnn(
-            cell=rnn_cell_dropout,
+            cell=rnn_cell,
             inputs=self.input_placeholder,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
             #initial_state=initial_state
         )
-
-        h_drop = tf.nn.dropout(state, keep_prob=1)
+        state = tf.reshape(tf.slice(state, [0, 0, 0], [1, -1, -1]), (-1, self.config.rnn_hidden_size))
+        h_drop = tf.nn.dropout(state, keep_prob=1.0)
 
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
