@@ -12,12 +12,17 @@ np.random.seed(1)
 
 class DataConfig():
     def __init__(self, batch_size, max_seq_len):
+        # Input file
         self.pretrained_vectors_file = '../data/glove.840B.300d.txt'
+        self.train_file = "../data/train.csv"
+        self.predict_file = "../data/test.csv"
+
+        # Generated files
         self.dict_file = '../data/processed/word2idx.txt'
         self.embedding_file = '../data/processed/embedding.npy'
-        self.train_file = "../data/train.csv"
         self.parsed_train_file_pos = "../data/processed/parsed_train_pos.txt"
         self.parsed_train_file_neg = "../data/processed/parsed_train_neg.txt"
+        self.parsed_predict_file = "../data/processed/parsed_predict.txt"
 
         self.train_dir = "../data/processed/train/"
         self.dev_dir = "../data/processed/dev/"
@@ -52,6 +57,11 @@ class QuoraQuestionsModel():
     def load_embedding(self):
         if self.embedding is None:
             self.embedding = np.load(self.config.embedding_file)
+
+    def get_predict_ids(self):
+        ids = pd.read_csv(self.config.predict_file, usecols=["qid"],
+                          index_col=False)
+        return ids.values[:, 0]
 
 
 class QuoraQuestionsModelParser(QuoraQuestionsModel):
@@ -127,8 +137,8 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
 
         labels = pd.read_csv(self.config.train_file, usecols=["target"])
         labels = list(labels.values[:, 0])
-        questions = pd.read_csv("../data/train.csv", usecols=["question_text"],
-                                index_col=False)
+        questions = pd.read_csv(self.config.train_file,
+                                usecols=["question_text"], index_col=False)
         self.load_dicts()
         unk_idx = self.word2idx[self.config.unknown_token]
 
@@ -145,6 +155,34 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
                 fo_pos.write(out_line)
             else:
                 fo_neg.write(out_line)
+
+    def predict_sentences_2_idxs(self):
+        """Replaces each Quora question with indexes corressponding to
+        respective position of tokens in embedding matrix. If include_unknown
+        is true, then replaces with corressponding index, ignores otherwise.
+
+        Creates 2 binary files:
+        parsed_train_pos.txt: list of lists containing token indexes (integers)
+                              of positive class
+
+        parsed_train_neg.txt: list of lists containing token indexes (integers)
+                              of negative class
+        """
+        fo = open(self.config.parsed_predict_file, 'w')
+        questions = pd.read_csv(self.config.predict_file,
+                                usecols=["question_text"], index_col=False)
+        self.load_dicts()
+        unk_idx = self.word2idx[self.config.unknown_token]
+
+        for quest in questions.question_text:
+            tokens = nltk.word_tokenize(quest.lower())
+            if self.config.include_unknown:
+                idxs = [self.word2idx.get(token, unk_idx) for token in
+                        tokens]
+            else:
+                idxs = [self.word2idx.get(token) for token in tokens]
+                idxs = [idx for idx in idxs if idx]
+            fo.write((str(" ".join(str(num) for num in idxs)) + "\n"))
 
     def split_helper(self, file_name, class_name):
         train_file, dev_file, test_file = map(
@@ -193,10 +231,21 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         self.merge_pos_neg_helper(self.config.test_dir)
         self.merge_pos_neg_helper(self.config.dev_dir)
 
+    def parse_all(self):
+        self.construct_dict()
+        self.construct_embedding()
+        self.add_unknown_token()
+        self.sentences_2_idxs()
+        self.predict_sentences_2_idxs()
+        self.split_train_test_dev()
+        self.merge_pos_neg()
+
 
 class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
     def train_sample_generator(self, fi):
-        """Yields sequence, sequence length from input file."""
+        """Yields sequence, sequence length from input file.
+        Reads file from beginning after reaching the end.
+        """
         while True:
             line = fi.readline()
             if not line:
@@ -205,7 +254,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             sequence = np.array(line.split(" "), dtype=np.intp)
             yield sequence, sequence.shape[0]
 
-    def labeled_sample_generator(self, fi):
+    def dev_sample_generator(self, fi):
         """Yields sequence, sequence length, and label from input file.
 
         Args:
@@ -216,6 +265,16 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             label = int(line_list[-1])
             sequence = np.array(line_list[:-1], dtype=np.intp)
             yield sequence, sequence.shape[0], label
+
+    def predict_sample_generator(self, fi):
+        """Yields sequence, sequence length from input file.
+
+        Args:
+            fi: file object opened for reading
+        """
+        for line in fi:
+            sequence = np.array(line.split(" "), dtype=np.intp)
+            yield sequence, sequence.shape[0]
 
     def train_batch_generator(self):
         """Generates train batches by randomly selecting labels from both
@@ -271,7 +330,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         i = 0
 
         fi = open(dir_name + "all.txt")
-        sample_gen = self.labeled_sample_generator(fi)
+        sample_gen = self.dev_sample_generator(fi)
         self.load_embedding()
 
         for sequence, seq_length, label in sample_gen:
@@ -296,19 +355,59 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         fi.close()
 
+    def predict_batch_generator(self):
+        """Generates test batches from all.txt in test/ or dev/ directories
+        where samples are shuffled and labeled.
+        Yields
+        input: numpy 2D array of shape (batch_size, max_seq_len,
+                                            embedding_size)
+        sequence lengths: numpy 2D array of shape (batch_size, )
+        """
+        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
+                          self.config.embedding_size))
+        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        i = 0
+
+        fi = open(self.config.parsed_predict_file)
+        sample_gen = self.predict_sample_generator(fi)
+        self.load_embedding()
+
+        for sequence, seq_length, in sample_gen:
+            seq_lengths[i] = seq_length
+            if seq_lengths[i] > self.config.max_seq_len:
+                seq_lengths[i] = self.config.max_seq_len
+                sequence = sequence[:seq_lengths[i]]
+            input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
+
+            i += 1
+
+            if i == self.config.batch_size:
+                yield input, seq_lengths
+                input = np.zeros(
+                    (self.config.batch_size, self.config.max_seq_len,
+                     self.config.embedding_size)
+                )
+                i = 0
+
+        if i < self.config.batch_size:
+            yield input[:i, :, :], seq_lengths[:i]
+
+        fi.close()
+
 
 def main_parser():
-    data_model = QuoraQuestionsModelParser(DataConfig())
-    data_model.construct_dict()
-    data_model.construct_embedding()
-    data_model.add_unknown_token()
-    data_model.sentences_2_idxs()
-    data_model.split_train_test_dev()
-    data_model.merge_pos_neg()
+    data_model = QuoraQuestionsModelParser(DataConfig(2, 70))
+    #data_model.construct_dict()
+    ##data_model.construct_embedding()
+    #data_model.add_unknown_token()
+    #data_model.sentences_2_idxs()
+    data_model.predict_sentences_2_idxs()
+    #data_model.split_train_test_dev()
+    #data_model.merge_pos_neg()
 
 
 def main_streamer():
-    data_model = QuoraQuestionsModelStreamer(DataConfig(2))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(2, 70))
     gen = data_model.test_batch_generator(data_model.config.dev_dir)
 
     for input, length, label in gen:
@@ -319,6 +418,5 @@ def main_streamer():
 
 
 if __name__ == '__main__':
-    #main_parser()
+    main_parser()
     #main_streamer()
-    pass

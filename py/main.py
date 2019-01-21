@@ -1,7 +1,9 @@
 import tensorflow as tf
+import pandas as pd
 
 from data_model import QuoraQuestionsModelStreamer, DataConfig
-from sentence_classifier import SentenceClassifierSeq2Seq, ModelConfig
+from sentence_classifier import SentenceClassifierSeq2SeqLSTM, ModelConfig
+from sentence_classifier import SentenceClassifierSeq2SeqGRU
 
 
 SAVE_EPOCH_STEP = 500
@@ -11,7 +13,7 @@ MAX_SEQ_LEN = 70
 
 def train_model():
     data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
@@ -69,7 +71,7 @@ def test_model(path_prefix):
     sess.close()
 
 
-def predict():
+def predict(path_prefix):
     data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
     classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
 
@@ -82,14 +84,18 @@ def predict():
     sess.run(init)
     classifier.saver.restore(sess, path_prefix)
 
-    score, labels = classifier.predict(
-        sess,
-        data_model.test_batch_generator(data_model.config.test_dir)
-    )
-
+    labels = classifier.predict(sess, data_model.predict_batch_generator())
+    print(labels)
     sess.close()
+
+    labels_df = pd.DataFrame(
+        {'qid': data_model.get_predict_ids(), 'prediction': labels},
+        columns=['qid', 'prediction']
+    )
+    labels_df.to_csv("../data/submission.csv", index=False)
 
 
 if __name__ == '__main__':
     train_model()
-    #test_model("saved/classifier.ckpt-5001")
+    #test_model("saved/classifier.ckpt-9001")
+    #predict("saved/classifier.ckpt-9001")

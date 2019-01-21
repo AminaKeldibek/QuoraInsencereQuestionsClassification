@@ -16,7 +16,7 @@ class ModelConfig():
 
     def __init__(self, batch_size, max_seq_len):
         self.n_classes = 2
-        self.max_gradient_norm = 1  # try with 5
+        self.max_gradient_norm = 5  # try with 1
         self.learning_rate = 5e-4
         self.embedding_size = 300
         self.rnn_hidden_size = 150
@@ -31,6 +31,7 @@ class SentenceClassifier():
     def __init__(self, config):
         self.config = config
         self.best_score = 0.0
+        self.best_model_path = None
         self.threshold = 0.5
 
     def build(self):
@@ -107,17 +108,25 @@ class SentenceClassifier():
         return pred
 
     def add_loss_op(self, pred):
-        """Adds loss ops to the computational graph.
+        """Adds ops for the cross entropy loss to the computational graph.
+        The loss is averaged over all examples in the current minibatch.
+
         Args:
-            pred: A tensor of shape (batch_size, n_classes)
+            pred: A tensor of shape (batch_size, n_classes) containing the
+                  output of the neural network before the softmax layer.
         Returns:
-            loss: A 0-d tensor (scalar)
+            loss: A 0-d tensor
         """
-        loss = tf.Variable(0.0, 'loss')
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=self.labels_placeholder,
+            logits=pred,
+            name="loss"
+        )
+        loss = tf.reduce_mean(loss)
 
         return loss
 
-    def add_training_op(self, loss):
+    def add_training_op(self, loss, global_step):
         """Creates an optimizer and applies the gradients to all trainable
         variables.
         Args:
@@ -125,7 +134,19 @@ class SentenceClassifier():
         Returns:
             train_op: The Op for training.
         """
-        optimizer = None
+
+        # Calculate and clip gradients
+        params = tf.trainable_variables()
+        gradients = tf.gradients(loss, params)
+        clipped_gradients, _ = tf.clip_by_global_norm(
+            gradients,
+            self.config.max_gradient_norm
+        )
+
+        # Optimization
+        optimizer = tf.train.AdamOptimizer(self.config.learning_rate)
+        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
+                                              global_step, "adam_optimizer")
 
         return optimizer
 
@@ -187,7 +208,7 @@ class SentenceClassifier():
 
             pred_labels = np.concatenate((pred_labels, pred))
 
-        return pred_labels
+        return pred_labels.astype(np.int8)
 
     def save_best(self, sess, score):
         """Saves best model during train."""
@@ -195,11 +216,12 @@ class SentenceClassifier():
             self.best_score = score
             path_prefix = self.saver.save(sess, self.config.save_path,
                                           self.global_step)
+            self.best_model_path = path_prefix
             return path_prefix
         return "Skip saving"
 
 
-class SentenceClassifierSeq2Seq(SentenceClassifier):
+class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
     def add_prediction_op(self):
         """Adds the core transformation for this model which transforms a batch
         of input data into a batch of predictions.
@@ -213,18 +235,65 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
-        #rnn_cell = tf.nn.rnn_cell.BasicRNNCell(self.config.rnn_hidden_size)
-
-        '''rnn_cell = tf.nn.rnn_cell.GRUCell(
+        rnn_cell = tf.nn.rnn_cell.GRUCell(
             self.config.rnn_hidden_size,
-            #activation=None,
-            #reuse=None,
+            activation='relu',
             kernel_initializer=tf.contrib.layers.xavier_initializer(),
             bias_initializer=tf.zeros_initializer(),
             name="gru",
             dtype=tf.float32
+        )
+        '''
+        rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
+            rnn_cell,
+            input_keep_prob=1.0,
+            output_keep_prob=1.0,
+            state_keep_prob=0.8
         )'''
 
+        outputs, state = tf.nn.dynamic_rnn(
+            cell=rnn_cell,
+            inputs=self.input_placeholder,
+            sequence_length=self.batch_seq_length_placeholder,
+            dtype=tf.float32
+            #initial_state=initial_state
+        )
+
+        h_drop = tf.nn.dropout(state, keep_prob=1.0)
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (self.config.rnn_hidden_size, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(h_drop, self.W_ho) + self.b_o
+
+        return pred
+
+
+class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
+    def add_prediction_op(self):
+        """Adds the core transformation for this model which transforms a batch
+        of input data into a batch of predictions.
+
+        Calculates forward pass of RNN on input sequence of length Tx:
+        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
+        After, calculates models prediction from last cell's activation h_Tx:
+        h_drop = Dropout(h_Tx, dropout_rate)
+        pred = dot(h_drop, W_ho) + b_o
+
+        Returns:
+            pred: A tensor of shape (batch_size, n_classes)
+        """
         rnn_cell = tf.nn.rnn_cell.LSTMCell(
             num_units=self.config.rnn_hidden_size,
             use_peepholes=False,
@@ -246,18 +315,19 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
             output_keep_prob=1.0,
             state_keep_prob=0.8
         )'''
-        #initial_state = rnn_cell.zero_state(batch_size = None, dtype=tf.float32)
 
         outputs, state = tf.nn.dynamic_rnn(
             cell=rnn_cell,
             inputs=self.input_placeholder,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
-            #initial_state=initial_state
         )
-        state = tf.reshape(tf.slice(state, [0, 0, 0], [1, -1, -1]), (-1, self.config.rnn_hidden_size))
-        h_drop = tf.nn.dropout(state, keep_prob=1.0)
+        state = tf.reshape(
+            tf.slice(state, [0, 0, 0], [1, -1, -1]),
+            (-1, self.config.rnn_hidden_size)
+        )
 
+        h_drop = tf.nn.dropout(state, keep_prob=1.0)
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
                 "W_ho",
@@ -276,45 +346,63 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
 
         return pred
 
-    def add_loss_op(self, pred):
-        """Adds ops for the cross entropy loss to the computational graph.
-        The loss is averaged over all examples in the current minibatch.
 
-        Args:
-            pred: A tensor of shape (batch_size, n_classes) containing the
-                  output of the neural network before the softmax layer.
+class SentenceClassifierSeq2SeqAttention(SentenceClassifier):
+    def add_prediction_op(self):
+        """Adds the core transformation for this model which transforms a batch
+        of input data into a batch of predictions.
+
+        Calculates forward pass of RNN on input sequence of length Tx:
+        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
+        After, calculates models prediction from last cell's activation h_Tx:
+        h_drop = Dropout(h_Tx, dropout_rate)
+        pred = dot(h_drop, W_ho) + b_o
+
         Returns:
-            loss: A 0-d tensor
+            pred: A tensor of shape (batch_size, n_classes)
         """
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=self.labels_placeholder,
-            logits=pred,
-            name="loss"
-        )
-        loss = tf.reduce_mean(loss)
-
-        return loss
-
-    def add_training_op(self, loss, global_step):
-        """Creates an optimizer and applies the gradients to all trainable
-        variables.
-        Args:
-            loss: Loss tensor, from cross_entropy_loss.
-        Returns:
-            train_op: The Op for training.
-        """
-
-        # Calculate and clip gradients
-        params = tf.trainable_variables()
-        gradients = tf.gradients(loss, params)
-        clipped_gradients, _ = tf.clip_by_global_norm(
-            gradients,
-            self.config.max_gradient_norm
+        rnn_cell_fwd = tf.nn.rnn_cell.GRUCell(
+            self.config.rnn_hidden_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru",
+            dtype=tf.float32
         )
 
-        # Optimization
-        optimizer = tf.train.AdamOptimizer(self.config.learning_rate)
-        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
-                                              global_step, "adam_optimizer")
+        rnn_cell_bwd = tf.nn.rnn_cell.GRUCell(
+            self.config.rnn_hidden_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru",
+            dtype=tf.float32
+        )
 
-        return optimizer
+        outputs, state = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_fwd,
+            cell_bw=rnn_cell_bwd,
+            inputs=self.input_placeholder,
+            sequence_length=self.batch_seq_length_placeholder,
+            dtype=tf.float32
+        )
+        # Attention here
+        context = tf.nn.dropout(state, keep_prob=1.0)
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (self.config.rnn_hidden_size, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(context, self.W_ho) + self.b_o
+
+        return pred
