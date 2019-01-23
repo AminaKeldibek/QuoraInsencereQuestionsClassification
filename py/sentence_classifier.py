@@ -17,9 +17,9 @@ class ModelConfig():
     def __init__(self, batch_size, max_seq_len):
         self.n_classes = 2
         self.max_gradient_norm = 5  # try with 1
-        self.learning_rate = 5e-4
+        self.learning_rate = 1e-3
         self.embedding_size = 300
-        self.rnn_hidden_size = 150
+        self.rnn_hidden_size = 300
         self.dropout = 0
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
@@ -352,47 +352,112 @@ class SentenceClassifierSeq2SeqAttention(SentenceClassifier):
         """Adds the core transformation for this model which transforms a batch
         of input data into a batch of predictions.
 
-        Calculates forward pass of RNN on input sequence of length Tx:
-        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
-        After, calculates models prediction from last cell's activation h_Tx:
-        h_drop = Dropout(h_Tx, dropout_rate)
+        Calculates bidirectional forward pass on input sequence of length Tx using GRU Cell:
+        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_h)# change equation here
+
+        This produces cell outputs as a tuple of forward and backward rnn cells.
+        The shape of this matrix is (None, T_x, n_h).
+
+        Cell outputs are then inputted to dense layer with sofmtax activatio to
+        calculate weights alpha:
+        alpha =  softmax(A * W_alpha_a), alpha has shape (None, T_x, 1)
+
+        Using alpha and outputs context vector is calculated as:
+        context = reduce_sum(output o alpha, axis=1)
+
+        Finally, class is predicted as
+        h_drop = Dropout(context, dropout_rate)
         pred = dot(h_drop, W_ho) + b_o
 
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
-        rnn_cell_fwd = tf.nn.rnn_cell.GRUCell(
-            self.config.rnn_hidden_size,
-            activation='relu',
-            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-            bias_initializer=tf.zeros_initializer(),
-            name="gru",
+        rnn_cell_fwd = tf.nn.rnn_cell.LSTMCell(
+            num_units=self.config.rnn_hidden_size,
+            use_peepholes=False,
+            #cell_clip=None,
+            initializer=tf.contrib.layers.xavier_initializer(),
+            num_proj=None,
+            #proj_clip=None,
+            #forget_bias=1.0,
+            state_is_tuple=True,
+            #activation=None,
+            #reuse=None,
+            name="lstm",
             dtype=tf.float32
         )
 
-        rnn_cell_bwd = tf.nn.rnn_cell.GRUCell(
-            self.config.rnn_hidden_size,
-            activation='relu',
-            kernel_initializer=tf.contrib.layers.xavier_initializer(),
-            bias_initializer=tf.zeros_initializer(),
-            name="gru",
+        rnn_cell_fwd_dropout = tf.nn.rnn_cell.DropoutWrapper(
+            rnn_cell_fwd,
+            input_keep_prob=1.0,
+            output_keep_prob=1.0,
+            state_keep_prob=0.7,
+            #variational_recurrent=False,
+            #input_size=None,
+            dtype=tf.float32,
+            seed=1,
+        )
+
+        rnn_cell_bwd = tf.nn.rnn_cell.LSTMCell(
+            num_units=self.config.rnn_hidden_size,
+            use_peepholes=False,
+            #cell_clip=None,
+            initializer=tf.contrib.layers.xavier_initializer(),
+            num_proj=None,
+            #proj_clip=None,
+            #forget_bias=1.0,
+            state_is_tuple=True,
+            #activation=None,
+            #reuse=None,
+            name="lstm",
             dtype=tf.float32
         )
 
-        outputs, state = tf.nn.bidirectional_dynamic_rnn(
-            cell_fw=rnn_cell_fwd,
-            cell_bw=rnn_cell_bwd,
+        rnn_cell_bwd_dropout = tf.nn.rnn_cell.DropoutWrapper(
+            rnn_cell_bwd,
+            input_keep_prob=1.0,
+            output_keep_prob=1.0,
+            state_keep_prob=0.7,
+            #variational_recurrent=False,
+            #input_size=None,
+            dtype=tf.float32,
+            seed=1,
+        )
+
+        outputs, states = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_fwd_dropout,
+            cell_bw=rnn_cell_bwd_dropout,
             inputs=self.input_placeholder,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
         )
+        states = tf.concat(outputs, axis=2)
+
         # Attention here
-        context = tf.nn.dropout(state, keep_prob=1.0)
+        self.W_alpha_a = tf.get_variable(
+            "W_alpha_a",
+            (self.config.rnn_hidden_size * 2, 1),
+            tf.float32,
+            tf.contrib.layers.xavier_initializer(),
+            trainable=True
+        )
+
+        states_prime = tf.reshape(states, shape=(-1, self.config.rnn_hidden_size * 2))
+        alpha_prime = tf.linalg.matmul(states_prime, self.W_alpha_a)
+        alpha = tf.reshape(alpha_prime, shape=(-1, self.config.max_seq_len, 1))
+        alpha = tf.nn.softmax(alpha, axis=1)
+        context = tf.reduce_sum(tf.multiply(states, alpha), axis=1)
+
+        '''h_dropout = tf.nn.dropout(
+            context,
+            keep_prob=0.8,
+            seed=1,
+        )'''
 
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
                 "W_ho",
-                (self.config.rnn_hidden_size, self.config.n_classes),
+                (self.config.rnn_hidden_size * 2, self.config.n_classes),
                 tf.float32,
                 tf.contrib.layers.xavier_initializer(),
                 trainable=True

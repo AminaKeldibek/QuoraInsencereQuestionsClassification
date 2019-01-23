@@ -3,17 +3,17 @@ import pandas as pd
 
 from data_model import QuoraQuestionsModelStreamer, DataConfig
 from sentence_classifier import SentenceClassifierSeq2SeqLSTM, ModelConfig
-from sentence_classifier import SentenceClassifierSeq2SeqGRU
+from sentence_classifier import SentenceClassifierSeq2SeqGRU, SentenceClassifierSeq2SeqAttention
 
 
 SAVE_EPOCH_STEP = 500
 BATCH_SIZE = pow(2, 7)
-MAX_SEQ_LEN = 70
+MAX_SEQ_LEN = 90
 
 
 def train_model():
     data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
