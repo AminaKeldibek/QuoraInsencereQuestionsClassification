@@ -10,29 +10,27 @@ class ModelConfig():
 
     The config class is used to store various hyperparameters and dataset
     information parameters. Model objects are passed a Config() object at
-    instantiation. They can then call self.config.<hyperparameter_name> to
+    instantiation. They can then call sef.config.<hyperparameter_name> to
     get the hyperparameter settings.
     """
-
-    def __init__(self, batch_size, max_seq_len):
-        self.n_classes = 2
-        self.max_gradient_norm = 5  # try with 1
-        self.learning_rate = 1e-3
-        self.embedding_size = 300
-        self.rnn_hidden_size = 300
-        self.dropout = 0
-        self.max_seq_len = max_seq_len
-        self.batch_size = batch_size
-        self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
-        self.save_path = "saved/classifier.ckpt"
+    n_classes = 2
+    max_gradient_norm = 5  # try with 1
+    learning_rate = 1e-3
+    rnn_hidden_size = 300
+    dropout = 0
+    save_path = "saved/classifier.ckpt"
 
 
 class SentenceClassifier():
-    def __init__(self, config):
+    def __init__(self, config, batch_size, max_seq_len, embedding_size):
         self.config = config
         self.best_score = 0.0
         self.best_model_path = None
         self.threshold = 0.5
+        self.embedding_size = embedding_size
+        self.max_seq_len = max_seq_len
+        self.batch_size = batch_size
+        self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
 
     def build(self):
         tf.set_random_seed(1)
@@ -62,7 +60,7 @@ class SentenceClassifier():
         """
         self.input_placeholder = tf.placeholder(
             tf.float32,
-            (None, self.config.max_seq_len, self.config.embedding_size),
+            (None, self.max_seq_len, self.embedding_size),
             "input"
         )
         self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
@@ -101,7 +99,7 @@ class SentenceClassifier():
         """
         pred = tf.get_variable(
             name='pred',
-            shape=(self.config.batch_size, self.config.n_classes),
+            shape=(self.batch_size, self.config.n_classes),
             initializer=tf.zeros_initializer()
         )
 
@@ -444,7 +442,7 @@ class SentenceClassifierSeq2SeqAttention(SentenceClassifier):
 
         states_prime = tf.reshape(states, shape=(-1, self.config.rnn_hidden_size * 2))
         alpha_prime = tf.linalg.matmul(states_prime, self.W_alpha_a)
-        alpha = tf.reshape(alpha_prime, shape=(-1, self.config.max_seq_len, 1))
+        alpha = tf.reshape(alpha_prime, shape=(-1, self.max_seq_len, 1))
         alpha = tf.nn.softmax(alpha, axis=1)
         context = tf.reduce_sum(tf.multiply(states, alpha), axis=1)
 
@@ -469,5 +467,112 @@ class SentenceClassifierSeq2SeqAttention(SentenceClassifier):
                 trainable=True
             )
             pred = tf.matmul(context, self.W_ho) + self.b_o
+
+        return pred
+
+
+class SentenceClassifierConv(SentenceClassifier):
+    def __init__(self, config, batch_size, max_seq_len, embedding_size):
+        self.config = config
+        self.best_score = 0.0
+        self.best_model_path = None
+        self.threshold = 0.5
+        self.embedding_size = embedding_size
+        self.max_seq_len = max_seq_len
+        self.batch_size = batch_size
+        self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
+
+        self.in_channels = 1
+        self.out_channels = 3
+        self.ngrams = [2, 3]
+        self.num_filters = len(self.ngrams) * self.out_channels
+        self.data_format = 'NHWC'
+        self.conv_strides = [1, 1, 1, 1]
+        self.max_pool_strides = [1, 1, 1, 1]
+
+    def get_filter(self, ngram, out_channels):
+        """Creates filter for convolution of shape
+        (ngram, embed_size, in_channel, out_channels).
+        If init is None, initialized with xavier_initializer
+        """
+        filter = tf.get_variable(
+            "filter",
+            (ngram, self.embedding_size, self.in_channels, out_channels),
+            tf.float32,
+            tf.contrib.layers.xavier_initializer(),
+            trainable=True
+        )
+        return filter
+
+    def add_prediction_op(self):
+        """Uses Kim's conv network architecture for sentence classification.
+            feature map has shape of (batch_size, out_height, out_width, out_channels)
+
+        Returns:
+            pred: A tensor of shape (batch_size, n_classes)
+        """
+        max_pool_out_list = []
+
+        input = tf.reshape(
+            self.input_placeholder,
+            (-1, self.max_seq_len, self.embedding_size, 1)
+        )
+        with tf.name_scope("convolution"):
+            for ngram in self.ngrams:
+                with tf.variable_scope(str(ngram) + "_gram_conv"):
+                    filters = self.get_filter(ngram, self.out_channels)
+                    b_conv = tf.get_variable(
+                        "b_conv",
+                        shape=(self.out_channels),
+                        initializer=tf.zeros_initializer()
+                    )
+                    z = tf.nn.conv2d(
+                        input,
+                        filters,
+                        strides=self.conv_strides,
+                        padding="VALID",
+                        use_cudnn_on_gpu=True,
+                        data_format=self.data_format,
+                        #dilations=[1, 1, 1, 1],
+                        name="conv"
+                    )
+                    feature_map = tf.nn.bias_add(
+                        z,
+                        b_conv,
+                        data_format=self.data_format,
+                        name="add_b_conv"
+                    )
+                    feature_map = tf.nn.tanh(feature_map, name="tanh_conv")
+                    max_pool_ngram_out = tf.nn.max_pool(
+                        feature_map,
+                        [1, self.max_seq_len - ngram + 1, 1, 1],
+                        strides=self.max_pool_strides,
+                        padding="VALID",
+                        data_format='NHWC',
+                        name="max_pool"
+                    )
+                    max_pool_ngram_out = tf.reshape(
+                        max_pool_ngram_out,
+                        (self.batch_size, self.out_channels)
+                    )
+                    max_pool_out_list.append(max_pool_ngram_out)
+
+            max_pool_out = tf.concat(max_pool_out_list, axis=1)
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (self.num_filters, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(max_pool_out, self.W_ho) + self.b_o
 
         return pred

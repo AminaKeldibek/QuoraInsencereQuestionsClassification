@@ -11,42 +11,41 @@ np.random.seed(1)
 
 
 class DataConfig():
-    def __init__(self, batch_size, max_seq_len):
-        # Input file
-        self.pretrained_vectors_file = '../data/glove.840B.300d.txt'
-        self.train_file = "../data/train.csv"
-        self.predict_file = "../data/test.csv"
+    # Input file
+    pretrained_vectors_file = '../data/glove.840B.300d.txt'
+    train_file = "../data/train.csv"
+    predict_file = "../data/test.csv"
 
-        # Generated files
-        self.dict_file = '../data/processed/word2idx.txt'
-        self.embedding_file = '../data/processed/embedding.npy'
-        self.parsed_train_file_pos = "../data/processed/parsed_train_pos.txt"
-        self.parsed_train_file_neg = "../data/processed/parsed_train_neg.txt"
-        self.parsed_predict_file = "../data/processed/parsed_predict.txt"
+    # Generated files
+    dict_file = '../data/processed/word2idx.txt'
+    embedding_file = '../data/processed/embedding.npy'
+    parsed_train_file_pos = "../data/processed/parsed_train_pos.txt"
+    parsed_train_file_neg = "../data/processed/parsed_train_neg.txt"
+    parsed_predict_file = "../data/processed/parsed_predict.txt"
 
-        self.train_dir = "../data/processed/train/"
-        self.dev_dir = "../data/processed/dev/"
-        self.test_dir = "../data/processed/test/"
+    train_dir = "../data/processed/train/"
+    dev_dir = "../data/processed/dev/"
+    test_dir = "../data/processed/test/"
 
-        self.embedding_size = 300
-        self.max_seq_len = max_seq_len
-        self.include_unknown = True
-        self.unknown_token = "<UNK>"
-        self.embedding_sample_size = 10000
+    include_unknown = True
+    unknown_token = "<UNK>"
+    embedding_sample_size = 10000
 
-        self.dev_ratio = 0.05
-        self.test_ratio = 0.05
+    dev_ratio = 0.05
+    test_ratio = 0.05
 
-        self.batch_size = batch_size
-        self.class_probs = [0.9, 0.1]
+    class_probs = [0.9, 0.1]
 
 
 class QuoraQuestionsModel():
-    def __init__(self, data_config):
+    def __init__(self, data_config, batch_size, max_seq_len, embedding_size):
         self.config = data_config
         self.word2idx = dict()
         self.idx2word = dict()
         self.embedding = None
+        self.embedding_size = embedding_size
+        self.max_seq_len = max_seq_len
+        self.batch_size = batch_size
 
     def load_dicts(self):
         f = open(self.config.dict_file, 'rb')

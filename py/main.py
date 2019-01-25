@@ -9,11 +9,12 @@ from sentence_classifier import SentenceClassifierSeq2SeqGRU, SentenceClassifier
 SAVE_EPOCH_STEP = 500
 BATCH_SIZE = pow(2, 7)
 MAX_SEQ_LEN = 90
+EMBED_SIZE = 300
 
 
 def train_model():
-    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
@@ -50,8 +51,8 @@ def train_model():
 
 
 def test_model(path_prefix):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -72,8 +73,8 @@ def test_model(path_prefix):
 
 
 def predict(path_prefix):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
