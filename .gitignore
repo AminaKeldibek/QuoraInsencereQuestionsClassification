@@ -9,3 +9,4 @@ py/logdir/
 py/log/
 py/saved/
 py/test.py
+py/testlogdir/

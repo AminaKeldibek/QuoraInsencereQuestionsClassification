@@ -89,7 +89,7 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         i = 0
         self.load_dicts()
         embedding_shape = (max(self.word2idx.values()) + 1,
-                           self.config.embedding_size)
+                           self.embedding_size)
         embedding = np.zeros(embedding_shape)
 
         with open(self.config.pretrained_vectors_file, 'r') as fi:
@@ -284,7 +284,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
         fis = (self.config.train_dir + "pos.txt",
                self.config.train_dir + "neg.txt")
         fi_pos, fi_neg = map(open, fis)
@@ -295,18 +295,18 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         self.load_embedding()
 
         while True:
-            input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                              self.config.embedding_size))
-            labels = np.random.choice([0, 1], self.config.batch_size,
+            input = np.zeros((self.batch_size, self.max_seq_len,
+                              self.embedding_size))
+            labels = np.random.choice([0, 1], self.batch_size,
                                       p=self.config.class_probs)
-            for i in range(self.config.batch_size):
+            for i in range(self.batch_size):
                 if labels[i] == 1:
                     sequence, seq_lengths[i] = next(sample_gen_pos)
                 else:
                     sequence, seq_lengths[i] = next(sample_gen_neg)
 
-                if seq_lengths[i] > self.config.max_seq_len:
-                    seq_lengths[i] = self.config.max_seq_len
+                if seq_lengths[i] > self.max_seq_len:
+                    seq_lengths[i] = self.max_seq_len
                     sequence = sequence[:seq_lengths[i]]
                 input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
             yield input, seq_lengths, labels
@@ -322,10 +322,10 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                          self.config.embedding_size))
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
-        labels = np.zeros((self.config.batch_size), dtype=np.intp)
+        input = np.zeros((self.batch_size, self.max_seq_len,
+                          self.embedding_size))
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
+        labels = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
         fi = open(dir_name + "all.txt")
@@ -334,22 +334,22 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         for sequence, seq_length, label in sample_gen:
             seq_lengths[i], labels[i] = seq_length, label
-            if seq_lengths[i] > self.config.max_seq_len:
-                seq_lengths[i] = self.config.max_seq_len
+            if seq_lengths[i] > self.max_seq_len:
+                seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
             input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
 
             i += 1
 
-            if i == self.config.batch_size:
+            if i == self.batch_size:
                 yield input, seq_lengths, labels
                 input = np.zeros(
-                    (self.config.batch_size, self.config.max_seq_len,
-                     self.config.embedding_size)
+                    (self.batch_size, self.max_seq_len,
+                     self.embedding_size)
                 )
                 i = 0
 
-        if i < self.config.batch_size:
+        if i < self.batch_size:
             yield input[:i, :, :], seq_lengths[:i], labels[:i]
 
         fi.close()
@@ -362,9 +362,9 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                                             embedding_size)
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                          self.config.embedding_size))
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        input = np.zeros((self.batch_size, self.max_seq_len,
+                          self.embedding_size))
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
         fi = open(self.config.parsed_predict_file)
@@ -373,22 +373,22 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         for sequence, seq_length, in sample_gen:
             seq_lengths[i] = seq_length
-            if seq_lengths[i] > self.config.max_seq_len:
-                seq_lengths[i] = self.config.max_seq_len
+            if seq_lengths[i] > self.max_seq_len:
+                seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
             input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
 
             i += 1
 
-            if i == self.config.batch_size:
+            if i == self.batch_size:
                 yield input, seq_lengths
                 input = np.zeros(
-                    (self.config.batch_size, self.config.max_seq_len,
-                     self.config.embedding_size)
+                    (self.batch_size, self.max_seq_len,
+                     self.embedding_size)
                 )
                 i = 0
 
-        if i < self.config.batch_size:
+        if i < self.batch_size:
             yield input[:i, :, :], seq_lengths[:i]
 
         fi.close()

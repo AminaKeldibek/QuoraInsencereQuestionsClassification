@@ -2,19 +2,18 @@ import tensorflow as tf
 import pandas as pd
 
 from data_model import QuoraQuestionsModelStreamer, DataConfig
-from sentence_classifier import SentenceClassifierSeq2SeqLSTM, ModelConfig
-from sentence_classifier import SentenceClassifierSeq2SeqGRU, SentenceClassifierSeq2SeqAttention
+from sentence_classifier import SentenceClassifierConv, SentenceClassifierSeq2SeqGRU, ModelConfig
 
 
 SAVE_EPOCH_STEP = 500
 BATCH_SIZE = pow(2, 7)
-MAX_SEQ_LEN = 90
+MAX_SEQ_LEN = 70
 EMBED_SIZE = 300
 
 
 def train_model():
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
@@ -28,7 +27,7 @@ def train_model():
 
     sess.run(init)
 
-    for i in range(classifier.config.n_epochs):
+    for i in range(classifier.n_epochs):
         inputs, seq_length, labels = next(train_gen)
         loss, metric, summary = classifier.fit(sess, inputs, seq_length,
                                                labels)
@@ -52,7 +51,7 @@ def train_model():
 
 def test_model(path_prefix):
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -74,7 +73,7 @@ def test_model(path_prefix):
 
 def predict(path_prefix):
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqAttention(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -98,5 +97,5 @@ def predict(path_prefix):
 
 if __name__ == '__main__':
     train_model()
-    #test_model("saved/classifier.ckpt-9001")
+    #test_model("saved/classifier.ckpt-8501")
     #predict("saved/classifier.ckpt-9001")

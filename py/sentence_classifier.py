@@ -483,8 +483,8 @@ class SentenceClassifierConv(SentenceClassifier):
         self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
 
         self.in_channels = 1
-        self.out_channels = 3
-        self.ngrams = [2, 3]
+        self.out_channels = 100
+        self.ngrams = [2, 3, 4]
         self.num_filters = len(self.ngrams) * self.out_channels
         self.data_format = 'NHWC'
         self.conv_strides = [1, 1, 1, 1]
@@ -548,17 +548,22 @@ class SentenceClassifierConv(SentenceClassifier):
                         [1, self.max_seq_len - ngram + 1, 1, 1],
                         strides=self.max_pool_strides,
                         padding="VALID",
-                        data_format='NHWC',
+                        data_format=self.data_format,
                         name="max_pool"
                     )
                     max_pool_ngram_out = tf.reshape(
                         max_pool_ngram_out,
-                        (self.batch_size, self.out_channels)
+                        (-1, self.out_channels)
                     )
                     max_pool_out_list.append(max_pool_ngram_out)
 
             max_pool_out = tf.concat(max_pool_out_list, axis=1)
-
+        # add dropout on max_pool_out
+        '''h_dropout = tf.nn.dropout(
+            max_pool_out,
+            keep_prob=0.5,
+            seed=1,
+        )'''
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
                 "W_ho",
