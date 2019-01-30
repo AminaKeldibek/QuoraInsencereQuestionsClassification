@@ -142,7 +142,7 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         unk_idx = self.word2idx[self.config.unknown_token]
 
         for label, quest in zip(labels, questions.question_text):
-            tokens = nltk.word_tokenize(quest.lower())
+            tokens = utils.preprocess_text(quest)
             if self.config.include_unknown:
                 idxs = [self.word2idx.get(token, unk_idx) for token in
                         tokens]
@@ -395,14 +395,8 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
 
 def main_parser():
-    data_model = QuoraQuestionsModelParser(DataConfig(2, 70))
-    #data_model.construct_dict()
-    ##data_model.construct_embedding()
-    #data_model.add_unknown_token()
-    #data_model.sentences_2_idxs()
-    data_model.predict_sentences_2_idxs()
-    #data_model.split_train_test_dev()
-    #data_model.merge_pos_neg()
+    data_model = QuoraQuestionsModelParser(DataConfig(), 100, 70, 300)
+    data_model.parse_all()
 
 
 def main_streamer():

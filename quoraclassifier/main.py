@@ -13,7 +13,8 @@ EMBED_SIZE = 300
 
 def train_model():
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    #classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
@@ -23,7 +24,7 @@ def train_model():
                 tf.initializers.local_variables())
 
     sess = tf.Session(graph=graph)
-    writer = tf.summary.FileWriter("logdir", graph)
+    writer = tf.summary.FileWriter("../tf_logdir", graph)
 
     sess.run(init)
 
@@ -97,5 +98,5 @@ def predict(path_prefix):
 
 if __name__ == '__main__':
     train_model()
-    #test_model("saved/classifier.ckpt-8501")
-    #predict("saved/classifier.ckpt-9001")
+    #test_model("saved_models/classifier.ckpt-8501")
+    #predict("saved_models/classifier.ckpt-9001")

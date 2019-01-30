@@ -18,7 +18,7 @@ class ModelConfig():
     learning_rate = 1e-3
     rnn_hidden_size = 300
     dropout = 0
-    save_path = "saved/classifier.ckpt"
+    save_path = "../saved_models/classifier.ckpt"
 
 
 class SentenceClassifier():
