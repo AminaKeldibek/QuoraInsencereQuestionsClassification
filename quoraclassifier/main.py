@@ -1,8 +1,11 @@
 import tensorflow as tf
 import pandas as pd
+import utils
 
 from data_model import QuoraQuestionsModelStreamer, DataConfig
-from sentence_classifier import SentenceClassifierConv, SentenceClassifierSeq2SeqGRU, ModelConfig
+from sentence_classifier import SentenceClassifierConv
+from sentence_classifier import SentenceClassifierSeq2SeqGRU
+from sentence_classifier import ModelConfig, SentenceClassifierSeq2SeqGRUBinary
 
 
 SAVE_EPOCH_STEP = 500
@@ -13,7 +16,6 @@ EMBED_SIZE = 300
 
 def train_model():
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    #classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     train_gen = data_model.train_batch_generator()
 
@@ -38,9 +40,10 @@ def train_model():
             print (f"Trained for {i} epochs")
             print (f"Train Loss/f1_score is {loss:.2f} / {metric:.2f}")
 
-            score, labels = classifier.evaluate(
+            score, _, _ = classifier.evaluate(
                 sess,
-                data_model.test_batch_generator(data_model.config.dev_dir)
+                data_model.test_batch_generator(data_model.config.dev_dir),
+                classifier.threshold
             )
             print (f"Dev f1_score is {score:.2f}")
             path_prefix = classifier.save_best(sess, score)
@@ -49,10 +52,12 @@ def train_model():
     writer.close()
     sess.close()
 
+    return classifier.best_model_path
 
-def test_model(path_prefix):
+
+def find_best_threshold(path_prefix):
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -63,18 +68,46 @@ def test_model(path_prefix):
     sess.run(init)
     classifier.saver.restore(sess, path_prefix)
 
-    score, labels = classifier.evaluate(
+    score, pred_labels, labels = classifier.evaluate(
         sess,
-        data_model.test_batch_generator(data_model.config.test_dir)
+        data_model.test_batch_generator(data_model.config.train_dir)
+    )
+
+    best_threshold = utils.optimize_f1(pred_labels, labels)
+
+    sess.close()
+
+    return best_threshold
+
+
+def test_model(path_prefix, threshold=0.5):
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+
+    graph = tf.Graph()
+    with graph.as_default():
+        classifier.build()
+        init = tf.initializers.global_variables()  # restore best graph vars
+
+    sess = tf.Session(graph=graph)
+    sess.run(init)
+    classifier.saver.restore(sess, path_prefix)
+
+    score, pred_labels, labels = classifier.evaluate(
+        sess,
+        data_model.test_batch_generator(data_model.config.test_dir),
+        threshold
     )
     print (f"Test f1_score is {score:.2f}")
 
     sess.close()
 
+    return score, pred_labels, labels
 
-def predict(path_prefix):
+
+def predict(path_prefix, threshold=0.5):
     data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierConv(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRUBinary(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -85,8 +118,11 @@ def predict(path_prefix):
     sess.run(init)
     classifier.saver.restore(sess, path_prefix)
 
-    labels = classifier.predict(sess, data_model.predict_batch_generator())
-    print(labels)
+    labels = classifier.predict(
+        sess,
+        data_model.predict_batch_generator(),
+        threshold
+    )
     sess.close()
 
     labels_df = pd.DataFrame(
@@ -97,6 +133,9 @@ def predict(path_prefix):
 
 
 if __name__ == '__main__':
-    train_model()
-    #test_model("saved_models/classifier.ckpt-8501")
-    #predict("saved_models/classifier.ckpt-9001")
+    best_model_path = train_model()
+    #optimal_treshold = find_best_threshold(best_model_path)
+    #print ("Optimal threshold is", optimal_treshold)
+    #best_model_path = "../saved_models/classifier.ckpt-7501"
+    ##test_model(best_model_path)
+    #predict("saved_models/classifier.ckpt-9001", optimal_treshold)

@@ -61,17 +61,29 @@ class DataPreprocessTestCase(unittest.TestCase):
             ["What", "does", "hashtag", "bhakt", "mean"],
             ["Quran", "is", "misspelling"],
             ["anti", "trump", "campaign", "is", "started"],
-            ["to", "see", "this", "go", "to", "www.youtube.com"],
+            ["to", "see", "this", "go", "to", "youtube"],
             ["They", "hide", "raping", "by", "adding", "hyphen"],
             ["fuck", "and", "fuck", "and", "shit", "are", "found", "in", "questions"],
             ["Wrong", "apostroph", "sign", "'", "is", "used", "in", "I'm", "and", "do", "not"],
             ["Why", "people", "write", "friends"],
-            ["Simple", "AI", "application", "costs", "100", "Rupee"],
-            ["write", "c", "function", "Two", "squared", "plus", "4", "squared", "equals", "18"],
-            ["300", "degrees", "and", "zuckerberg", "or", "demonetization"],
+            ["Simple", "AI", "application", "costs", "#", "#", "#", "Rupee"],
+            ["write", "c", "function", "Two", "squared", "plus", "4", "squared", "equals", "#", "#"],
+            ["#", "#", "#", "degrees", "and", "zuckerberg", "or", "demonetization"],
             ["Will", "not", "you", "come", "or", "you", "are", "scared", "?"],
             ["can", "not", "help", "and", "do", "not", "want", "cause", "we",
              "are", "weak", "and", "I","would", "like", "to", "ask", "of", "Quora"],
+        ]
+        for i in range(len(text)):
+            self.assertEqual(preprocess_text(text[i]), out[i])
+
+    def test_hide_numbers(self):
+        text = [
+            "I am 27 years old",
+            "It happened in 1999 year"
+        ]
+        out = [
+            ["I", "am", "#", "#", "years", "old"],
+            ["It", "happened", "in", "#", "#" ,"#", "#", "year"]
         ]
         for i in range(len(text)):
             self.assertEqual(preprocess_text(text[i]), out[i])

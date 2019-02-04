@@ -1,7 +1,6 @@
 import pickle
 import numpy as np
 import pandas as pd
-import nltk
 import utils
 import time
 import random
@@ -27,7 +26,7 @@ class DataConfig():
     dev_dir = "../data/processed/dev/"
     test_dir = "../data/processed/test/"
 
-    include_unknown = True
+    include_unknown = False
     unknown_token = "<UNK>"
     embedding_sample_size = 10000
 
@@ -62,6 +61,13 @@ class QuoraQuestionsModel():
                           index_col=False)
         return ids.values[:, 0]
 
+    def write_dict(self):
+        with open(self.config.dict_file, 'wb') as fo:
+            pickle.Pickler(fo, 4).dump(self.word2idx)
+
+    def write_embedding(self):
+        np.save(self.config.embedding_file, self.embedding)
+
 
 class QuoraQuestionsModelParser(QuoraQuestionsModel):
     def construct_dict(self):
@@ -69,18 +75,15 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         it to word2idx.txt file in data directory of the project.
         """
         i = 0
-        word2idx = dict()
-
+        self.word2idx = dict()
         fi = open(self.config.pretrained_vectors_file, 'r')
-        fo = open(self.config.dict_file, 'wb')
 
         for line in fi:
-            word2idx[line.split(" ")[0]] = i
+            self.word2idx[line.split(" ")[0]] = i
             i += 1
 
-        pickle.Pickler(fo, 4).dump(word2idx)
+        self.write_dict()
         fi.close()
-        fo.close()
 
     def construct_embedding(self):
         """ Creates embedding matrix from input file and writes to binary file
@@ -90,34 +93,43 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         self.load_dicts()
         embedding_shape = (max(self.word2idx.values()) + 1,
                            self.embedding_size)
-        embedding = np.zeros(embedding_shape)
+        self.embedding = np.zeros(embedding_shape)
 
         with open(self.config.pretrained_vectors_file, 'r') as fi:
             for line in fi:
                 word_vec = line.split(" ")[1:]
-                embedding[i, :] = np.array(word_vec, dtype=np.float32)
+                self.embedding[i, :] = np.array(word_vec, dtype=np.float32)
                 i += 1
 
-        np.save(self.config.embedding_file, embedding)
+        self.write_embedding()
 
     def add_unknown_token(self):
         """Adds unknown token to word2idx dictionary and computes vector as an
         average of random sample as suggested by Pennington
         (https://groups.google.com/forum/#!searchin/globalvectors/unk|sort:date/globalvectors/9w8ZADXJclA/hRdn4prm-XUJ)
         """
-        with open(self.config.dict_file, 'rb') as fi:
-            word2idx = pickle.Unpickler(fi).load()
+        self.load_dicts()
+        self.load_embedding()
 
-        with open(self.config.dict_file, 'wb') as fi:
-            word2idx[self.config.unknown_token] = max(word2idx.values()) + 1
-            pickle.Pickler(fi, 4).dump(word2idx)
+        self.word2idx[self.config.unknown_token] = max(self.word2idx.values()) + 1
 
-        embedding = np.load(self.config.embedding_file)
-        sample_idxs = np.random.randint(0, embedding.shape[0],
+        sample_idxs = np.random.randint(0, self.embedding.shape[0],
                                         self.config.embedding_sample_size)
-        unknown_vector = np.mean(embedding[sample_idxs, :], axis=0)
-        embedding = np.vstack((embedding, unknown_vector))
-        np.save(self.config.embedding_file, embedding)
+        unknown_vector = np.mean(self.embedding[sample_idxs, :], axis=0)
+        self.embedding = np.vstack((self.embedding, unknown_vector))
+
+        self.write_dict()
+        self.write_embedding()
+
+    def add_unk_to_dict(self, tokens):
+        for token in tokens:
+            if token not in self.word2idx:
+                self.word2idx[token] = max(self.word2idx.values()) + 1
+                self.num_unknown_words += 1
+
+    def init_unknowns(self):
+        oov_random = utils.xavier_weight_init((self.num_unknown_words, self.embedding_size))
+        self.embedding = np.vstack((self.embedding, oov_random))
 
     def sentences_2_idxs(self):
         """Replaces each Quora question with indexes corressponding to
@@ -134,6 +146,10 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         fo_pos = open(self.config.parsed_train_file_pos, 'w')
         fo_neg = open(self.config.parsed_train_file_neg, 'w')
 
+        self.load_dicts()
+        self.load_embedding()
+        self.num_unknown_words = 0
+
         labels = pd.read_csv(self.config.train_file, usecols=["target"])
         labels = list(labels.values[:, 0])
         questions = pd.read_csv(self.config.train_file,
@@ -143,6 +159,8 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
 
         for label, quest in zip(labels, questions.question_text):
             tokens = utils.preprocess_text(quest)
+            self.add_unk_to_dict(tokens)
+
             if self.config.include_unknown:
                 idxs = [self.word2idx.get(token, unk_idx) for token in
                         tokens]
@@ -154,6 +172,10 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
                 fo_pos.write(out_line)
             else:
                 fo_neg.write(out_line)
+
+        self.init_unknowns()
+        self.write_dict()
+        self.write_embedding()
 
     def predict_sentences_2_idxs(self):
         """Replaces each Quora question with indexes corressponding to
@@ -168,13 +190,19 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
                               of negative class
         """
         fo = open(self.config.parsed_predict_file, 'w')
+
+        self.load_dicts()
+        self.load_embedding()
+        self.num_unknown_words = 0
+
         questions = pd.read_csv(self.config.predict_file,
                                 usecols=["question_text"], index_col=False)
         self.load_dicts()
         unk_idx = self.word2idx[self.config.unknown_token]
 
         for quest in questions.question_text:
-            tokens = nltk.word_tokenize(quest.lower())
+            tokens = utils.preprocess_text(quest)
+            self.add_unk_to_dict(tokens)
             if self.config.include_unknown:
                 idxs = [self.word2idx.get(token, unk_idx) for token in
                         tokens]
@@ -182,6 +210,10 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
                 idxs = [self.word2idx.get(token) for token in tokens]
                 idxs = [idx for idx in idxs if idx]
             fo.write((str(" ".join(str(num) for num in idxs)) + "\n"))
+
+        self.init_unknowns()
+        self.write_dict()
+        self.write_embedding()
 
     def split_helper(self, file_name, class_name):
         train_file, dev_file, test_file = map(
@@ -227,13 +259,14 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
             fo.writelines(out)
 
     def merge_pos_neg(self):
+        self.merge_pos_neg_helper(self.config.train_dir)
         self.merge_pos_neg_helper(self.config.test_dir)
         self.merge_pos_neg_helper(self.config.dev_dir)
 
     def parse_all(self):
         self.construct_dict()
         self.construct_embedding()
-        self.add_unknown_token()
+        #self.add_unknown_token()
         self.sentences_2_idxs()
         self.predict_sentences_2_idxs()
         self.split_train_test_dev()
@@ -314,7 +347,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         map(lambda fi: fi.close(), (fi_pos, fi_neg))
 
     def test_batch_generator(self, dir_name):
-        """Generates test batches from all.txt in test/ or dev/ directories
+        """Generates test batches from all.txt in train/ test/ or dev/ directories
         where samples are shuffled and labeled.
         Yields
         input: numpy 2D array of shape (batch_size, max_seq_len,
