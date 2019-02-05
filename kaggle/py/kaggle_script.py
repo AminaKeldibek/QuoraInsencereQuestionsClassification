@@ -5,18 +5,24 @@ import nltk
 import random
 import tensorflow as tf
 import os
+import re
+import string
+from nltk.tokenize import TweetTokenizer
 from sklearn.metrics import f1_score
 
 
-random.seed(1)
-np.random.seed(1)
+RANDOM_SEED = 1029
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
 
 
 SAVE_EPOCH_STEP = 500
 BATCH_SIZE = pow(2, 7)
 MAX_SEQ_LEN = 70
+EMBED_SIZE = 300
 
 
+#**************************************utils.py*********************************
 def create_dir(path):
     if not os.path.exists(path):
         try:
@@ -34,6 +40,104 @@ def binarize(x, threshold):
     return (x_out)
 
 
+def remove_nonascii(text):
+    printable = set(string.printable)
+    text = ''.join(list(filter(lambda x: x in printable, text)))
+
+    return text
+
+
+def clean_text(text):
+    remove_patterns = r"\\{2,}|\.{2,}|_|…"
+    text = re.sub(remove_patterns, "", text)
+
+    return text
+
+
+def separate_punctuation(text):
+    # copied from kaggle
+    puncts =  ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '-',
+              '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^',
+              '_', '`', '{', '|', '}', '~']
+    for punct in puncts:
+        text = text.replace(punct, f' {punct} ')
+    return text
+
+
+def hide_numbers(x):
+    # copied from kaggle
+    x = re.sub('[0-9]{5,}', '#####', x)
+    x = re.sub('[0-9]{4}', '####', x)
+    x = re.sub('[0-9]{3}', '###', x)
+    x = re.sub('[0-9]{2}', '##', x)
+
+    return x
+
+
+def remove_units(text):
+    return re.sub("(#+)[a-zA-Z]+", "", text)
+
+
+def replace_text(text):
+    token_from = [
+        "cryptocurrencies", "Cryptocurrency", "Brexit", "brexit", "Cryptocurrencies",
+        "Redmi", "redmi", "Coinbase", "coinbase", "\.net", "OnePlus", "Oneplus",
+        "Bhakts", "bhakts", "Qur'an", "qur'an", "anti-trump", "anti-Trump", "www.youtube.com/watch",
+        "r-aping", "raaping", "f\*\*k", "F'king", "sh\*t", "´", "i'am", "f.r.i.e.n.d.s", "ai/ml", "₹",
+        "²", "°", "zuckerburg", "demonetisation", "demonitisation", "Demonetization", "demonitization",
+        "\^2", "c/c\+\+", "he's", "she's", "it's", "how's", "'s", "'ve", "'ll",
+        "won't", "Won't", "Can't", "n't", "'re", "'d", "Quorans", "UCEED",
+        "Blockchain", "GDPR", "BNBR", "Boruto", "ethereum",
+        "DCEU", "IIEST", "SJWs", "Qoura", "LNMIIT", "Upwork", "upwork", "Zerodha",
+        "Doklam", "HackerRank", "altcoins", "altcoin", "Litecoin", "litecoin",
+        "Amazon.in", "NICMAR", "Vajiram", "\u200b", " adhaar", "Adhaar", "fortnite",
+        "Trumpcare", "Quoras", "Tensorflow", "blockchains",
+        "Unacademy", "unacademy", "Awdhesh", "chsl", "Adityanath", "squaredx",
+        "MUOET", "AlShamsi",
+        "eLitmus", "Jiren", "Beerus", "Ryzen", "Baahubali", "SRMJEE",
+        "SGSITS", "Binance", "Quoras", "aspdotnet", "TensorFlow", "tensorflow", "nanodegree", "Nanodegree",
+        "Erdoan", "Bitconnect", "Trumpism", "genderfluid"
+    ]
+
+    token_to = [
+        "cryptocurrency", "cryptocurrency", "Britain exit", "Britain exit", "cryptocurrency",
+        "Xiaomi smartphone", "Xiaomi smartphone", "Bitcoin", "bitcoin", "dotnet", "BBK", "BBK",
+        "bhakt", "bhakt", "Quran", "Quran", "anti trump", "anti trump", "youtube",
+        "raping", "raping", "fuck", "fuck", "shit", "'", "I am", 'friends', "AI", " Rupee",
+        " squared", " degrees", "zuckerberg", "demonetization", "demonetization", "demonetization", "demonetization",
+        " squared", "c", "he is", "she is", "it is", "how is"," 's", " have", " will",
+        "will not", "Will not", "can not", " not", " are", " would", "of Quora", "exam",
+        "blockchain", "data protection", "be nice be respectful", "naruto", "Ethereum",
+        "comics", "Indian Institutes", "SJW", "Quora", "LNM", "freelance", "freelance", "stock",
+        "Tibet", "algorithms", "bitcoin", "bitcoin", "bitcoin", "bitcoin",
+        "Amazon", "institute", "exam", " ", " aadhaar", "aadhaar", "Fortnite",
+        "AHCA", "Quora", "DL", "blockchain",
+        "Indian Coursera", "Indian Coursera", "Indian Coursera", "CHSL", "Indian politician", "squared x",
+        "exam", "fashion holding",
+        "Indian recruitment company", "anime game", "anime game", "CPU", "Indian movie", "exam",
+        "Indian university", "bitcoin", "Quora", "ASP.NET", "DL", "DL", "online course", "online course",
+        "Erdogan", "cryptocurrency", "Trump", "gender fluid boy girl"
+    ]
+    for i in range(len(token_from)):
+        text = re.sub(token_from[i], token_to[i], text)
+
+    return text
+
+
+def preprocess_text(text):
+    text = replace_text(text)
+    text = clean_text(text)
+    text = remove_nonascii(text)
+    text = separate_punctuation(text)
+    text = hide_numbers(text)
+    text = remove_units(text)
+
+    tokens = TweetTokenizer().tokenize(text)
+
+    return tokens
+
+
+#********************************softmax implementation*************************
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     """Compute the log of the sum of exponentials of input elements."""
     if b is not None:
@@ -81,59 +185,103 @@ def softmax(x, axis=None):
     return np.exp(x - logsumexp(x, axis=axis, keepdims=True))
 
 
+def xavier_weight_init(shape):
+    """Defines an initializer for the Xavier distribution.
+    Specifically, the output should be sampled uniformly from [-epsilon, epsilon] where
+        epsilon = sqrt(6) / <sum of the sizes of shape's dimensions>
+    e.g., if shape = (2, 3), epsilon = sqrt(6 / (2 + 3))
+    This function will be used as a variable initializer.
+    Args:
+        shape: Tuple or 1-d array that species the dimensions of the requested tensor.
+    Returns:
+        out: tf.Tensor of specified shape sampled from the Xavier distribution.
+    """
+    lim = np.sqrt(6. / sum(shape))
+    out = np.random.uniform(-lim, lim, shape)
+
+    return out
+
+
+#***************************************data_model.py***************************
 class DataConfig():
-    def __init__(self, batch_size, max_seq_len):
-        # Input file
-        self.pretrained_vectors_file = '../input/embeddings/glove.840B.300d/glove.840B.300d.txt'
-        self.train_file = "../input/train.csv"
-        self.predict_file = "../input/test.csv"
+    # Input file
+    word_vec_fi_glove = '../input/embeddings/glove.840B.300d/glove.840B.300d.txt'
+    word_vec_fi_paragram = '../input/embeddings/paragram_300_sl999/paragram_300_sl999.txt'
 
-        # Generated files
-        self.dict_file = '../processed/word2idx.txt'
-        self.embedding_file = '../processed/embedding.npy'
-        self.parsed_train_file_pos = "../processed/parsed_train_pos.txt"
-        self.parsed_train_file_neg = "../processed/parsed_train_neg.txt"
-        self.parsed_predict_file = "../processed/parsed_predict.txt"
+    train_file = "../input/train.csv"
+    predict_file = "../input/test.csv"
 
-        self.train_dir = "../processed/train/"
-        self.dev_dir = "../processed/dev/"
-        self.test_dir = "../processed/test/"
+    # Generated files
+    dict_file = '../processed/word2idx.txt'
+    embedding_file = '../processed/embedding.npy'
+    parsed_train_file_pos = "../processed/parsed_train_pos.txt"
+    parsed_train_file_neg = "../processed/parsed_train_neg.txt"
+    parsed_predict_file = "../processed/parsed_predict.txt"
 
-        self.embedding_size = 300
-        self.max_seq_len = max_seq_len
-        self.include_unknown = True
-        self.unknown_token = "<UNK>"
-        self.embedding_sample_size = 10000
+    train_dir = "../processed/train/"
+    dev_dir = "../processed/dev/"
+    test_dir = "../processed/test/"
 
-        self.dev_ratio = 0.05
-        self.test_ratio = 0.05
+    embedding_size = 300
+    max_seq_len = max_seq_len
+    include_unknown = True
+    unknown_token = "<UNK>"
+    embedding_sample_size = 10000
 
-        self.batch_size = batch_size
-        self.class_probs = [0.9, 0.1]
+    dev_ratio = 0.05
+    test_ratio = 0.05
+
+    batch_size = batch_size
+    class_probs = [0.9, 0.1]
 
 
 class QuoraQuestionsModel():
-    def __init__(self, data_config):
-        create_dir("../processed")
+    def __init__(self, data_config, batch_size, max_seq_len, embedding_size):
         self.config = data_config
         self.word2idx = dict()
         self.idx2word = dict()
         self.embedding = None
+        self.embedding_size = embedding_size
+        self.max_seq_len = max_seq_len
+        self.batch_size = batch_size
+        self.vocab_size = 0
 
     def load_dicts(self):
-        f = open(self.config.dict_file, 'rb')
-        self.word2idx = pickle.Unpickler(f).load()
-        self.idx2wod = {val: key for key, val in self.word2idx.items()}
-        f.close()
+        with open(self.config.dict_file, 'rb') as f:
+            self.word2idx = pickle.Unpickler(f).load()
+        self.idx2word = {val: key for key, val in self.word2idx.items()}
+        self.vocab_size = max(self.word2idx.values()) + 1
 
     def load_embedding(self):
         if self.embedding is None:
             self.embedding = np.load(self.config.embedding_file)
+            self.vocab_size = self.embedding.shape[0]
+
+    def load_all(self):
+        self.load_dicts()
+        self.load_embedding()
 
     def get_predict_ids(self):
         ids = pd.read_csv(self.config.predict_file, usecols=["qid"],
                           index_col=False)
         return ids.values[:, 0]
+
+    def write_dict(self):
+        with open(self.config.dict_file, 'wb') as fo:
+            pickle.Pickler(fo, 4).dump(self.word2idx)
+
+    def write_embedding(self):
+        np.save(self.config.embedding_file, self.embedding)
+
+    def write_all(self):
+        self.write_dict()
+        self.write_embedding()
+
+    def clear_all(self):
+        self.embedding = None
+        self.word2idx = None
+        self.idx2word = None
+        self.vocab_size = 0
 
 
 class QuoraQuestionsModelParser(QuoraQuestionsModel):
@@ -142,18 +290,16 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         it to word2idx.txt file in data directory of the project.
         """
         i = 0
-        word2idx = dict()
-
-        fi = open(self.config.pretrained_vectors_file, 'r')
-        fo = open(self.config.dict_file, 'wb')
+        self.word2idx = dict()
+        fi = open(self.config.word_vec_fi_glove, 'r')
 
         for line in fi:
-            word2idx[line.split(" ")[0]] = i
+            self.word2idx[line.split(" ")[0]] = i
             i += 1
 
-        pickle.Pickler(fo, 4).dump(word2idx)
+        self.vocab_size = i
+        self.write_dict()
         fi.close()
-        fo.close()
 
     def construct_embedding(self):
         """ Creates embedding matrix from input file and writes to binary file
@@ -162,35 +308,103 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         i = 0
         self.load_dicts()
         embedding_shape = (max(self.word2idx.values()) + 1,
-                           self.config.embedding_size)
-        embedding = np.zeros(embedding_shape)
+                           self.embedding_size)
+        self.embedding = np.zeros(embedding_shape)
 
-        with open(self.config.pretrained_vectors_file, 'r') as fi:
+        with open(self.config.word_vec_fi_glove, 'r') as fi:
             for line in fi:
                 word_vec = line.split(" ")[1:]
-                embedding[i, :] = np.array(word_vec, dtype=np.float32)
+                self.embedding[i, :] = np.array(word_vec, dtype=np.float32)
                 i += 1
 
-        np.save(self.config.embedding_file, embedding)
+        self.write_embedding()
+
+    def embeddings_file_gen(self, fi):
+        ''' Yields token and embedding from fi.
+
+        Args:
+            fi: file object opened for reading
+
+        Yields:
+            token: string
+            embedding: numpy array of shape (1, self.embedding_size)
+        '''
+        for line in fi:
+            line_list = line.split(" ")
+            token = line_list[0]
+            embedding = np.array(line_list[1:], dtype=np.float32)
+            embedding = np.reshape(embedding, (1, -1))
+
+            yield token, embedding
+
+    def add_embedding(self, token, embedding):
+        """Helper function to add new token to self.word2idx and embedding to
+        self.embeddings"""
+        self.word2idx[token] = self.vocab_size
+        self.vocab_size += 1
+
+        self.embedding = np.vstack((self.embedding, embedding))
+
+    def add_paragram(self):
+        """Averages word vectors that occur in both glove and paragram and
+        creates union of two embeddings"""
+        num_new_words = 720000
+        new_embeddings = np.empty((num_new_words, self.embedding_size))
+        concat_emb = np.zeros((2, self.embedding_size))
+        new_word2idx = dict()
+        new_words_count = 0
+
+        self.load_all()
+        fi = open(self.config.word_vec_fi_paragram, "r", encoding="utf8",
+                  errors='ignore')
+        embed_gen = self.embeddings_file_gen(fi)
+
+        for token, embedding in embed_gen:
+            if token not in self.word2idx:
+                new_word2idx[token] = self.vocab_size
+                new_embeddings[new_words_count, :] = embedding
+                self.vocab_size += 1
+                new_words_count += 1
+            else:
+                concat_emb[0, :] = self.embedding[self.word2idx[token]]
+                concat_emb[1, :] = embedding
+                self.embedding[self.word2idx[token]] = np.mean(
+                    concat_emb,
+                    axis=0
+                )
+
+        self.word2idx.update(new_word2idx)
+        self.embedding = np.vstack((
+            self.embedding,
+            new_embeddings[:new_words_count, :]
+        ))
+
+        self.write_all()
+        fi.close()
 
     def add_unknown_token(self):
         """Adds unknown token to word2idx dictionary and computes vector as an
         average of random sample as suggested by Pennington
         (https://groups.google.com/forum/#!searchin/globalvectors/unk|sort:date/globalvectors/9w8ZADXJclA/hRdn4prm-XUJ)
         """
-        with open(self.config.dict_file, 'rb') as fi:
-            word2idx = pickle.Unpickler(fi).load()
-
-        with open(self.config.dict_file, 'wb') as fi:
-            word2idx[self.config.unknown_token] = max(word2idx.values()) + 1
-            pickle.Pickler(fi, 4).dump(word2idx)
-
-        embedding = np.load(self.config.embedding_file)
-        sample_idxs = np.random.randint(0, embedding.shape[0],
+        self.load_all()
+        sample_idxs = np.random.randint(0, self.embedding.shape[0],
                                         self.config.embedding_sample_size)
-        unknown_vector = np.mean(embedding[sample_idxs, :], axis=0)
-        embedding = np.vstack((embedding, unknown_vector))
-        np.save(self.config.embedding_file, embedding)
+        unknown_vector = np.mean(self.embedding[sample_idxs, :], axis=0)
+
+        self.add_embedding(self.config.unknown_token, unknown_vector)
+        self.write_all()
+
+    def add_unk_to_dict(self, tokens):
+        for token in tokens:
+            if token not in self.word2idx:
+                self.word2idx[token] = self.vocab_size
+                self.vocab_size += 1
+                self.num_unknown_words += 1
+
+    def init_unknown_embeddings(self):
+        oov_random = xavier_weight_init((self.num_unknown_words, self.embedding_size))
+        self.embedding = np.vstack((self.embedding, oov_random))
 
     def sentences_2_idxs(self):
         """Replaces each Quora question with indexes corressponding to
@@ -206,16 +420,17 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
         """
         fo_pos = open(self.config.parsed_train_file_pos, 'w')
         fo_neg = open(self.config.parsed_train_file_neg, 'w')
-
+        self.load_dicts()
         labels = pd.read_csv(self.config.train_file, usecols=["target"])
+
         labels = list(labels.values[:, 0])
         questions = pd.read_csv(self.config.train_file,
                                 usecols=["question_text"], index_col=False)
-        self.load_dicts()
-        unk_idx = self.word2idx[self.config.unknown_token]
+        unk_idx = self.word2idx.get(self.config.unknown_token)
 
         for label, quest in zip(labels, questions.question_text):
-            tokens = nltk.word_tokenize(quest.lower())
+            tokens = preprocess_text(quest)
+
             if self.config.include_unknown:
                 idxs = [self.word2idx.get(token, unk_idx) for token in
                         tokens]
@@ -241,13 +456,14 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
                               of negative class
         """
         fo = open(self.config.parsed_predict_file, 'w')
+        self.load_dicts()
+
         questions = pd.read_csv(self.config.predict_file,
                                 usecols=["question_text"], index_col=False)
-        self.load_dicts()
         unk_idx = self.word2idx[self.config.unknown_token]
 
         for quest in questions.question_text:
-            tokens = nltk.word_tokenize(quest.lower())
+            tokens = preprocess_text(quest)
             if self.config.include_unknown:
                 idxs = [self.word2idx.get(token, unk_idx) for token in
                         tokens]
@@ -300,13 +516,17 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
             fo.writelines(out)
 
     def merge_pos_neg(self):
+        self.merge_pos_neg_helper(self.config.train_dir)
         self.merge_pos_neg_helper(self.config.test_dir)
         self.merge_pos_neg_helper(self.config.dev_dir)
 
     def parse_all(self):
         self.construct_dict()
         self.construct_embedding()
-        self.add_unknown_token()
+        #self.add_unknown_token()
+
+        #self.add_paragram()
+
         self.sentences_2_idxs()
         self.predict_sentences_2_idxs()
         self.split_train_test_dev()
@@ -357,7 +577,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
         fis = (self.config.train_dir + "pos.txt",
                self.config.train_dir + "neg.txt")
         fi_pos, fi_neg = map(open, fis)
@@ -368,18 +588,18 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         self.load_embedding()
 
         while True:
-            input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                              self.config.embedding_size))
-            labels = np.random.choice([0, 1], self.config.batch_size,
+            input = np.zeros((self.batch_size, self.max_seq_len,
+                              self.embedding_size))
+            labels = np.random.choice([0, 1], self.batch_size,
                                       p=self.config.class_probs)
-            for i in range(self.config.batch_size):
+            for i in range(self.batch_size):
                 if labels[i] == 1:
                     sequence, seq_lengths[i] = next(sample_gen_pos)
                 else:
                     sequence, seq_lengths[i] = next(sample_gen_neg)
 
-                if seq_lengths[i] > self.config.max_seq_len:
-                    seq_lengths[i] = self.config.max_seq_len
+                if seq_lengths[i] > self.max_seq_len:
+                    seq_lengths[i] = self.max_seq_len
                     sequence = sequence[:seq_lengths[i]]
                 input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
             yield input, seq_lengths, labels
@@ -395,10 +615,10 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                          self.config.embedding_size))
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
-        labels = np.zeros((self.config.batch_size), dtype=np.intp)
+        input = np.zeros((self.batch_size, self.max_seq_len,
+                          self.embedding_size))
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
+        labels = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
         fi = open(dir_name + "all.txt")
@@ -407,22 +627,22 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         for sequence, seq_length, label in sample_gen:
             seq_lengths[i], labels[i] = seq_length, label
-            if seq_lengths[i] > self.config.max_seq_len:
-                seq_lengths[i] = self.config.max_seq_len
+            if seq_lengths[i] > self.max_seq_len:
+                seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
             input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
 
             i += 1
 
-            if i == self.config.batch_size:
+            if i == self.batch_size:
                 yield input, seq_lengths, labels
                 input = np.zeros(
-                    (self.config.batch_size, self.config.max_seq_len,
-                     self.config.embedding_size)
+                    (self.batch_size, self.max_seq_len,
+                     self.embedding_size)
                 )
                 i = 0
 
-        if i < self.config.batch_size:
+        if i < self.batch_size:
             yield input[:i, :, :], seq_lengths[:i], labels[:i]
 
         fi.close()
@@ -435,9 +655,9 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                                             embedding_size)
         sequence lengths: numpy 2D array of shape (batch_size, )
         """
-        input = np.zeros((self.config.batch_size, self.config.max_seq_len,
-                          self.config.embedding_size))
-        seq_lengths = np.zeros((self.config.batch_size), dtype=np.intp)
+        input = np.zeros((self.batch_size, self.max_seq_len,
+                          self.embedding_size))
+        seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
         fi = open(self.config.parsed_predict_file)
@@ -446,22 +666,22 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
 
         for sequence, seq_length, in sample_gen:
             seq_lengths[i] = seq_length
-            if seq_lengths[i] > self.config.max_seq_len:
-                seq_lengths[i] = self.config.max_seq_len
+            if seq_lengths[i] > self.max_seq_len:
+                seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
             input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
 
             i += 1
 
-            if i == self.config.batch_size:
+            if i == self.batch_size:
                 yield input, seq_lengths
                 input = np.zeros(
-                    (self.config.batch_size, self.config.max_seq_len,
-                     self.config.embedding_size)
+                    (self.batch_size, self.max_seq_len,
+                     self.embedding_size)
                 )
                 i = 0
 
-        if i < self.config.batch_size:
+        if i < self.batch_size:
             yield input[:i, :, :], seq_lengths[:i]
 
         fi.close()
@@ -472,32 +692,31 @@ class ModelConfig():
 
     The config class is used to store various hyperparameters and dataset
     information parameters. Model objects are passed a Config() object at
-    instantiation. They can then call self.config.<hyperparameter_name> to
+    instantiation. They can then call sef.config.<hyperparameter_name> to
     get the hyperparameter settings.
     """
-
-    def __init__(self, batch_size, max_seq_len):
-        self.n_classes = 2
-        self.max_gradient_norm = 1  # try with 5
-        self.learning_rate = 5e-4
-        self.embedding_size = 300
-        self.rnn_hidden_size = 150
-        self.dropout = 0
-        self.max_seq_len = max_seq_len
-        self.batch_size = batch_size
-        self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
-        self.save_path = "saved/classifier.ckpt"
+    n_classes = 2
+    max_gradient_norm = 5  # try with 1
+    learning_rate = 1e-3
+    rnn_hidden_size = 300
+    dropout = 0
+    save_path = "../saved_models/classifier.ckpt"
 
 
 class SentenceClassifier():
-    def __init__(self, config):
+    def __init__(self, config, batch_size, max_seq_len, embedding_size):
         self.config = config
         self.best_score = 0.0
         self.best_model_path = None
         self.threshold = 0.5
+        self.embedding_size = embedding_size
+        self.max_seq_len = max_seq_len
+        self.batch_size = batch_size
+        self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
+        self.n_epochs = 20000
 
     def build(self):
-        tf.set_random_seed(1)
+        tf.set_random_seed(RANDOM_SEED)
         self.add_placeholders()
         self.global_step = tf.Variable(0, dtype=tf.int32, trainable=False,
                                        name='global_step')
@@ -524,7 +743,7 @@ class SentenceClassifier():
         """
         self.input_placeholder = tf.placeholder(
             tf.float32,
-            (None, self.config.max_seq_len, self.config.embedding_size),
+            (None, self.max_seq_len, self.embedding_size),
             "input"
         )
         self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
@@ -563,24 +782,32 @@ class SentenceClassifier():
         """
         pred = tf.get_variable(
             name='pred',
-            shape=(self.config.batch_size, self.config.n_classes),
+            shape=(self.batch_size, self.config.n_classes),
             initializer=tf.zeros_initializer()
         )
 
         return pred
 
     def add_loss_op(self, pred):
-        """Adds loss ops to the computational graph.
+        """Adds ops for the cross entropy loss to the computational graph.
+        The loss is averaged over all examples in the current minibatch.
+
         Args:
-            pred: A tensor of shape (batch_size, n_classes)
+            pred: A tensor of shape (batch_size, n_classes) containing the
+                  output of the neural network before the softmax layer.
         Returns:
-            loss: A 0-d tensor (scalar)
+            loss: A 0-d tensor
         """
-        loss = tf.Variable(0.0, 'loss')
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=self.labels_placeholder,
+            logits=pred,
+            name="loss"
+        )
+        loss = tf.reduce_mean(loss)
 
         return loss
 
-    def add_training_op(self, loss):
+    def add_training_op(self, loss, global_step):
         """Creates an optimizer and applies the gradients to all trainable
         variables.
         Args:
@@ -588,7 +815,19 @@ class SentenceClassifier():
         Returns:
             train_op: The Op for training.
         """
-        optimizer = None
+
+        # Calculate and clip gradients
+        params = tf.trainable_variables()
+        gradients = tf.gradients(loss, params)
+        clipped_gradients, _ = tf.clip_by_global_norm(
+            gradients,
+            self.config.max_gradient_norm
+        )
+
+        # Optimization
+        optimizer = tf.train.AdamOptimizer(self.config.learning_rate)
+        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
+                                              global_step, "adam_optimizer")
 
         return optimizer
 
@@ -663,7 +902,7 @@ class SentenceClassifier():
         return "Skip saving"
 
 
-class SentenceClassifierSeq2Seq(SentenceClassifier):
+class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
     def add_prediction_op(self):
         """Adds the core transformation for this model which transforms a batch
         of input data into a batch of predictions.
@@ -677,17 +916,69 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
-        #rnn_cell = tf.nn.rnn_cell.BasicRNNCell(self.config.rnn_hidden_size)
 
-        '''rnn_cell = tf.nn.rnn_cell.GRUCell(
+        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+
+        rnn_cell = tf.nn.rnn_cell.GRUCell(
             self.config.rnn_hidden_size,
-            #activation=None,
-            #reuse=None,
+            activation='relu',
             kernel_initializer=tf.contrib.layers.xavier_initializer(),
             bias_initializer=tf.zeros_initializer(),
             name="gru",
             dtype=tf.float32
-        )'''
+        )
+
+        rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
+            rnn_cell,
+            input_keep_prob=0.9,
+            output_keep_prob=1.0,
+            state_keep_prob=0.8
+        )
+
+        outputs, state = tf.nn.dynamic_rnn(
+            cell=rnn_cell,
+            inputs=x_dropout,
+            sequence_length=self.batch_seq_length_placeholder,
+            dtype=tf.float32
+            #initial_state=initial_state
+        )
+
+        #h_drop = tf.nn.dropout(state, keep_prob=1.0)
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (self.config.rnn_hidden_size, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(state, self.W_ho) + self.b_o
+
+        return pred
+
+
+class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
+    def add_prediction_op(self):
+        """Adds the core transformation for this model which transforms a batch
+        of input data into a batch of predictions.
+
+        Calculates forward pass of RNN on input sequence of length Tx:
+        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
+        After, calculates models prediction from last cell's activation h_Tx:
+        h_drop = Dropout(h_Tx, dropout_rate)
+        pred = dot(h_drop, W_ho) + b_o
+
+        Returns:
+            pred: A tensor of shape (batch_size, n_classes)
+        """
+        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
 
         rnn_cell = tf.nn.rnn_cell.LSTMCell(
             num_units=self.config.rnn_hidden_size,
@@ -710,18 +1001,19 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
             output_keep_prob=1.0,
             state_keep_prob=0.8
         )'''
-        #initial_state = rnn_cell.zero_state(batch_size = None, dtype=tf.float32)
 
         outputs, state = tf.nn.dynamic_rnn(
             cell=rnn_cell,
-            inputs=self.input_placeholder,
+            inputs=x_dropout,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
-            #initial_state=initial_state
         )
-        state = tf.reshape(tf.slice(state, [0, 0, 0], [1, -1, -1]), (-1, self.config.rnn_hidden_size))
-        h_drop = tf.nn.dropout(state, keep_prob=1.0)
+        state = tf.reshape(
+            tf.slice(state, [0, 0, 0], [1, -1, -1]),
+            (-1, self.config.rnn_hidden_size)
+        )
 
+        h_drop = tf.nn.dropout(state, keep_prob=1.0)
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
                 "W_ho",
@@ -740,54 +1032,10 @@ class SentenceClassifierSeq2Seq(SentenceClassifier):
 
         return pred
 
-    def add_loss_op(self, pred):
-        """Adds ops for the cross entropy loss to the computational graph.
-        The loss is averaged over all examples in the current minibatch.
-
-        Args:
-            pred: A tensor of shape (batch_size, n_classes) containing the
-                  output of the neural network before the softmax layer.
-        Returns:
-            loss: A 0-d tensor
-        """
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=self.labels_placeholder,
-            logits=pred,
-            name="loss"
-        )
-        loss = tf.reduce_mean(loss)
-
-        return loss
-
-    def add_training_op(self, loss, global_step):
-        """Creates an optimizer and applies the gradients to all trainable
-        variables.
-        Args:
-            loss: Loss tensor, from cross_entropy_loss.
-        Returns:
-            train_op: The Op for training.
-        """
-
-        # Calculate and clip gradients
-        params = tf.trainable_variables()
-        gradients = tf.gradients(loss, params)
-        clipped_gradients, _ = tf.clip_by_global_norm(
-            gradients,
-            self.config.max_gradient_norm
-        )
-
-        # Optimization
-        optimizer = tf.train.AdamOptimizer(self.config.learning_rate)
-        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
-                                              global_step, "adam_optimizer")
-
-        return optimizer
-
-
 # Main
 def train_model():
-    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
     train_gen = data_model.train_batch_generator()
 
     graph = tf.Graph()
@@ -801,7 +1049,7 @@ def train_model():
 
     sess.run(init)
 
-    for i in range(classifier.config.n_epochs):
+    for i in range(classifier.n_epochs):
         inputs, seq_length, labels = next(train_gen)
         loss, metric, summary = classifier.fit(sess, inputs, seq_length,
                                                labels)
@@ -826,8 +1074,8 @@ def train_model():
 
 
 def predict(path_prefix):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(BATCH_SIZE, MAX_SEQ_LEN))
-    classifier = SentenceClassifierSeq2Seq(ModelConfig(BATCH_SIZE, MAX_SEQ_LEN))
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -850,6 +1098,6 @@ def predict(path_prefix):
 
 
 if __name__ == '__main__':
-    QuoraQuestionsModelParser(DataConfig(BATCH_SIZE, MAX_SEQ_LEN)).parse_all()
+    QuoraQuestionsModelParser(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE).parse_all()
     best_model_path = train_model()
     predict(best_model_path)
