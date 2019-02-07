@@ -5,19 +5,24 @@ import utils
 from data_model import QuoraQuestionsModelStreamer, DataConfig
 from sentence_classifier import SentenceClassifierConv
 from sentence_classifier import SentenceClassifierSeq2SeqGRU
+from sentence_classifier import SentenceClassifierSeq2SeqExtFeats
 from sentence_classifier import ModelConfig, SentenceClassifierSeq2SeqGRUBinary
 
 
 SAVE_EPOCH_STEP = 500
 BATCH_SIZE = pow(2, 7)
-MAX_SEQ_LEN = 70
+MAX_SEQ_LEN = 90
 EMBED_SIZE = 300
 
+LOW_LR = 0.0005
+UP_LR = 0.006
+STEP_SIZE = 1000
+LR_UPDATE_STEP = 200
 
-def train_model():
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+
+def train_model(classifier, data_model):
     train_gen = data_model.train_batch_generator()
+    clr_for_epoch = utils.calc_cyclical_learn_rate(LOW_LR, UP_LR, STEP_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -31,12 +36,19 @@ def train_model():
     sess.run(init)
 
     for i in range(classifier.n_epochs):
-        inputs, seq_length, labels = next(train_gen)
-        loss, metric, summary = classifier.fit(sess, inputs, seq_length,
-                                               labels)
+        if i % LR_UPDATE_STEP == 0:
+            lr = clr_for_epoch(i)
+            print (f"learning_rate is. {lr}")
+
+        inputs, seq_length, unique_count, labels = next(train_gen)
+        loss, metric, summary = classifier.fit(
+            sess,
+            inputs, seq_length, unique_count, labels,
+            lr
+        )
         writer.add_summary(summary, i)
 
-        if i % SAVE_EPOCH_STEP == 0:
+        if i % SAVE_EPOCH_STEP == 0 and i != 0:
             print (f"Trained for {i} epochs")
             print (f"Train Loss/f1_score is {loss:.2f} / {metric:.2f}")
 
@@ -55,10 +67,7 @@ def train_model():
     return classifier.best_model_path
 
 
-def find_best_threshold(path_prefix):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-
+def find_best_threshold(path_prefix, classifier, data_model):
     graph = tf.Graph()
     with graph.as_default():
         classifier.build()
@@ -80,10 +89,7 @@ def find_best_threshold(path_prefix):
     return best_threshold
 
 
-def test_model(path_prefix, threshold=0.5):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-
+def test_model(path_prefix, classifier, data_model, threshold=0.5):
     graph = tf.Graph()
     with graph.as_default():
         classifier.build()
@@ -105,10 +111,7 @@ def test_model(path_prefix, threshold=0.5):
     return score, pred_labels, labels
 
 
-def predict(path_prefix, threshold=0.5):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRUBinary(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-
+def predict(path_prefix, classifier, data_model, threshold=0.5):
     graph = tf.Graph()
     with graph.as_default():
         classifier.build()
@@ -133,7 +136,15 @@ def predict(path_prefix, threshold=0.5):
 
 
 if __name__ == '__main__':
-    best_model_path = train_model()
+    data_model = QuoraQuestionsModelStreamer(
+        DataConfig(),
+        BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE
+    )
+    classifier = SentenceClassifierSeq2SeqExtFeats(
+        ModelConfig(),
+        BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE
+    )
+    best_model_path = train_model(classifier, data_model)
     #optimal_treshold = find_best_threshold(best_model_path)
     #print ("Optimal threshold is", optimal_treshold)
     #best_model_path = "../saved_models/classifier.ckpt-7501"

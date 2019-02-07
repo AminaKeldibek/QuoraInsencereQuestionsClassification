@@ -21,6 +21,11 @@ BATCH_SIZE = pow(2, 7)
 MAX_SEQ_LEN = 70
 EMBED_SIZE = 300
 
+LOW_LR = 0.001
+UP_LR = 0.006
+STEP_SIZE = 1000
+LR_UPDATE_STEP = 200
+
 
 #**************************************utils.py*********************************
 def create_dir(path):
@@ -202,6 +207,20 @@ def xavier_weight_init(shape):
     return out
 
 
+def calc_cyclical_learn_rate(lower_lr, upper_lr, step_size):
+    period = 2 * step_size
+    delta = upper_lr - lower_lr
+
+    def calc_clr_for_epoch(epoch_counter):
+        local_cycle = np.floor(1 + epoch_counter / period)
+        local_x = np.abs(epoch_counter / step_size - 2 * local_cycle + 1)
+        lr = lower_lr + delta * max(0, 1 - local_x)
+
+        return lr
+
+    return calc_clr_for_epoch
+
+
 #***************************************data_model.py***************************
 class DataConfig():
     # Input file
@@ -223,7 +242,6 @@ class DataConfig():
     test_dir = "../processed/test/"
 
     embedding_size = 300
-    max_seq_len = max_seq_len
     include_unknown = True
     unknown_token = "<UNK>"
     embedding_sample_size = 10000
@@ -231,12 +249,12 @@ class DataConfig():
     dev_ratio = 0.05
     test_ratio = 0.05
 
-    batch_size = batch_size
     class_probs = [0.9, 0.1]
 
 
 class QuoraQuestionsModel():
     def __init__(self, data_config, batch_size, max_seq_len, embedding_size):
+        create_dir("../processed")
         self.config = data_config
         self.word2idx = dict()
         self.idx2word = dict()
@@ -523,7 +541,7 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
     def parse_all(self):
         self.construct_dict()
         self.construct_embedding()
-        #self.add_unknown_token()
+        self.add_unknown_token()
 
         #self.add_paragram()
 
@@ -535,8 +553,8 @@ class QuoraQuestionsModelParser(QuoraQuestionsModel):
 
 class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
     def train_sample_generator(self, fi):
-        """Yields sequence, sequence length from input file.
-        Reads file from beginning after reaching the end.
+        """Yields sequence, sequence length, count of unique tokens from input
+        file. Reads file from beginning after reaching the end.
         """
         while True:
             line = fi.readline()
@@ -544,7 +562,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                 fi.seek(0)
                 continue
             sequence = np.array(line.split(" "), dtype=np.intp)
-            yield sequence, sequence.shape[0]
+            yield sequence, sequence.shape[0], np.unique(sequence).shape[0]
 
     def dev_sample_generator(self, fi):
         """Yields sequence, sequence length, and label from input file.
@@ -556,7 +574,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             line_list = line.split(" ")
             label = int(line_list[-1])
             sequence = np.array(line_list[:-1], dtype=np.intp)
-            yield sequence, sequence.shape[0], label
+            yield sequence, sequence.shape[0], np.unique(sequence).shape[0], label
 
     def predict_sample_generator(self, fi):
         """Yields sequence, sequence length from input file.
@@ -566,7 +584,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         """
         for line in fi:
             sequence = np.array(line.split(" "), dtype=np.intp)
-            yield sequence, sequence.shape[0]
+            yield sequence, sequence.shape[0], np.unique(sequence).shape[0]
 
     def train_batch_generator(self):
         """Generates train batches by randomly selecting labels from both
@@ -574,10 +592,12 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         Yields
         input: numpy 2D array of shape (batch_size, max_seq_len,
                                             embedding_size)
-        labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
+        unique counts: numpy 2D array of shape (batch_size, )
+        labels: numpy 2D array of shape (batch_size, )
         """
         seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
+        unique_count = np.zeros((self.batch_size), dtype=np.intp)
         fis = (self.config.train_dir + "pos.txt",
                self.config.train_dir + "neg.txt")
         fi_pos, fi_neg = map(open, fis)
@@ -594,30 +614,32 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                                       p=self.config.class_probs)
             for i in range(self.batch_size):
                 if labels[i] == 1:
-                    sequence, seq_lengths[i] = next(sample_gen_pos)
+                    sequence, seq_lengths[i], unique_count[i] = next(sample_gen_pos)
                 else:
-                    sequence, seq_lengths[i] = next(sample_gen_neg)
+                    sequence, seq_lengths[i], unique_count[i] = next(sample_gen_neg)
 
                 if seq_lengths[i] > self.max_seq_len:
                     seq_lengths[i] = self.max_seq_len
                     sequence = sequence[:seq_lengths[i]]
                 input[i, 0:seq_lengths[i], :] = self.embedding[sequence, :]
-            yield input, seq_lengths, labels
+            yield input, seq_lengths, unique_count, labels
 
         map(lambda fi: fi.close(), (fi_pos, fi_neg))
 
     def test_batch_generator(self, dir_name):
-        """Generates test batches from all.txt in test/ or dev/ directories
+        """Generates test batches from all.txt in train/ test/ or dev/ directories
         where samples are shuffled and labeled.
         Yields
         input: numpy 2D array of shape (batch_size, max_seq_len,
                                             embedding_size)
         labels: numpy 2D array of shape (batch_size, )
         sequence lengths: numpy 2D array of shape (batch_size, )
+        unique counts: numpy 2D array of shape (batch_size, )
         """
         input = np.zeros((self.batch_size, self.max_seq_len,
                           self.embedding_size))
         seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
+        unique_counts = np.zeros((self.batch_size), dtype=np.intp)
         labels = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
@@ -625,8 +647,8 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         sample_gen = self.dev_sample_generator(fi)
         self.load_embedding()
 
-        for sequence, seq_length, label in sample_gen:
-            seq_lengths[i], labels[i] = seq_length, label
+        for sequence, seq_length, unique_count, label in sample_gen:
+            seq_lengths[i], labels[i], unique_counts[i] = seq_length, label, unique_count
             if seq_lengths[i] > self.max_seq_len:
                 seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
@@ -635,7 +657,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             i += 1
 
             if i == self.batch_size:
-                yield input, seq_lengths, labels
+                yield input, seq_lengths, unique_counts, labels
                 input = np.zeros(
                     (self.batch_size, self.max_seq_len,
                      self.embedding_size)
@@ -643,7 +665,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                 i = 0
 
         if i < self.batch_size:
-            yield input[:i, :, :], seq_lengths[:i], labels[:i]
+            yield input[:i, :, :], seq_lengths[:i], unique_counts[:i], labels[:i]
 
         fi.close()
 
@@ -658,14 +680,15 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         input = np.zeros((self.batch_size, self.max_seq_len,
                           self.embedding_size))
         seq_lengths = np.zeros((self.batch_size), dtype=np.intp)
+        unique_counts = np.zeros((self.batch_size), dtype=np.intp)
         i = 0
 
         fi = open(self.config.parsed_predict_file)
         sample_gen = self.predict_sample_generator(fi)
         self.load_embedding()
 
-        for sequence, seq_length, in sample_gen:
-            seq_lengths[i] = seq_length
+        for sequence, seq_length, unique_count in sample_gen:
+            seq_lengths[i], unique_counts[i] = seq_length, unique_count
             if seq_lengths[i] > self.max_seq_len:
                 seq_lengths[i] = self.max_seq_len
                 sequence = sequence[:seq_lengths[i]]
@@ -674,7 +697,7 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
             i += 1
 
             if i == self.batch_size:
-                yield input, seq_lengths
+                yield input, seq_lengths, unique_counts
                 input = np.zeros(
                     (self.batch_size, self.max_seq_len,
                      self.embedding_size)
@@ -682,9 +705,10 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
                 i = 0
 
         if i < self.batch_size:
-            yield input[:i, :, :], seq_lengths[:i]
+            yield input[:i, :, :], seq_lengths[:i], unique_counts[:i]
 
         fi.close()
+
 
 
 class ModelConfig():
@@ -698,7 +722,7 @@ class ModelConfig():
     n_classes = 2
     max_gradient_norm = 5  # try with 1
     learning_rate = 1e-3
-    rnn_hidden_size = 300
+    rnn_hidden_size = 100
     dropout = 0
     save_path = "../saved_models/classifier.ckpt"
 
@@ -713,7 +737,7 @@ class SentenceClassifier():
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
         self.n_epochs = int((1306122 - 0.1*1306122) / self.batch_size)
-        self.n_epochs = 20000
+        self.n_epochs = 1000
 
     def build(self):
         tf.set_random_seed(RANDOM_SEED)
@@ -748,11 +772,16 @@ class SentenceClassifier():
         )
         self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
                                                            "batch_seq_length")
+        self.batch_unique_count_placeholder = tf.placeholder(tf.int32, (None, ),
+                                                           "batch_unique_count")
         self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
-        self.config.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+
+        self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+        self.lr_placeholder = tf.placeholder(tf.float32, (), "lr")
 
     def create_feed_dict(self, inputs_batch, batch_seq_length,
-                         labels_batch=None, dropout=1):
+                         batch_unique_count, labels_batch=None, dropout=1,
+                         lr=None):
         """Creates the feed_dict for training the given step.
         If label_batch is None, then no labels are added to feed_dict
 
@@ -767,10 +796,12 @@ class SentenceClassifier():
         feed_dict = dict()
         feed_dict[self.input_placeholder] = inputs_batch
         feed_dict[self.batch_seq_length_placeholder] = batch_seq_length
-        feed_dict[self.config.dropout_placeholder] = dropout
+        feed_dict[self.batch_unique_count_placeholder] = batch_unique_count
+        feed_dict[self.dropout_placeholder] = dropout
         if labels_batch is not None:
             feed_dict[self.labels_placeholder] = labels_batch
-
+        if lr is not None:
+            feed_dict[self.lr_placeholder] = lr
         return feed_dict
 
     def add_prediction_op(self):
@@ -902,7 +933,57 @@ class SentenceClassifier():
         return "Skip saving"
 
 
-class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
+class SentenceClassifierSeq2SeqExtFeats(SentenceClassifier):
+    def add_placeholders(self):
+        """Generates placeholder variables to represent the input tensors.
+
+        Adds following nodes to the computational graph:
+
+        input_placeholder: Input placeholder tensor of shape (None,
+                           max_seq_len, embedding_size), type tf.float32
+        labels_placeholder: Labels placeholder tensor of shape (None),
+                            type tf.int32
+        dropout_placeholder: Dropout value placeholder of shape (), i.e.
+                             scalar, type tf.float32
+        """
+        self.input_placeholder = tf.placeholder(
+            tf.float32,
+            (None, self.max_seq_len, self.embedding_size),
+            "input"
+        )
+        self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
+                                                           "batch_seq_length")
+        self.batch_unique_count_placeholder = tf.placeholder(tf.float32, (None, ),
+                                                           "batch_unique_count")
+        self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
+
+        self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+        self.lr_placeholder = tf.placeholder(tf.float32, (), "dropout")
+
+    def add_training_op(self, loss, global_step):
+        """Creates an optimizer and applies the gradients to all trainable
+        variables.
+        Args:
+            loss: Loss tensor, from cross_entropy_loss.
+        Returns:
+            train_op: The Op for training.
+        """
+
+        # Calculate and clip gradients
+        params = tf.trainable_variables()
+        gradients = tf.gradients(loss, params)
+        clipped_gradients, _ = tf.clip_by_global_norm(
+            gradients,
+            self.config.max_gradient_norm
+        )
+
+        # Optimization
+        optimizer = tf.train.AdamOptimizer(self.lr_placeholder)
+        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
+                                              global_step, "adam_optimizer")
+
+        return optimizer
+
     def add_prediction_op(self):
         """Adds the core transformation for this model which transforms a batch
         of input data into a batch of predictions.
@@ -917,38 +998,81 @@ class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
             pred: A tensor of shape (batch_size, n_classes)
         """
 
-        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+        #x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+        layer_1_size = 150
+        layer_2_size = 25
+        num_aux_feats = 4
 
-        rnn_cell = tf.nn.rnn_cell.GRUCell(
-            self.config.rnn_hidden_size,
+        rnn_cell_layer_1_fwd = tf.nn.rnn_cell.GRUCell(
+            layer_1_size,
             activation='relu',
             kernel_initializer=tf.contrib.layers.xavier_initializer(),
             bias_initializer=tf.zeros_initializer(),
-            name="gru",
+            name="gru_1",
             dtype=tf.float32
         )
 
-        rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
-            rnn_cell,
-            input_keep_prob=0.9,
-            output_keep_prob=1.0,
-            state_keep_prob=0.8
+        rnn_cell_layer_1_bwd = tf.nn.rnn_cell.GRUCell(
+            layer_1_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_1",
+            dtype=tf.float32
         )
 
-        outputs, state = tf.nn.dynamic_rnn(
-            cell=rnn_cell,
-            inputs=x_dropout,
+        rnn_cell_layer_2_fwd = tf.nn.rnn_cell.GRUCell(
+            layer_2_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_2",
+            dtype=tf.float32
+        )
+
+        rnn_cell_layer_2_bwd = tf.nn.rnn_cell.GRUCell(
+            layer_2_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_2",
+            dtype=tf.float32
+        )
+
+        outputs_1, states_1 = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_layer_1_fwd,
+            cell_bw=rnn_cell_layer_1_bwd,
+            inputs=self.input_placeholder,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
-            #initial_state=initial_state
         )
+        h1 = tf.concat(outputs_1, axis=2, name="concat1")
 
-        #h_drop = tf.nn.dropout(state, keep_prob=1.0)
+        outputs_2, states_2 = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_layer_2_fwd,
+            cell_bw=rnn_cell_layer_2_bwd,
+            inputs=h1,
+            dtype=tf.float32
+        )
+        h2 = tf.concat(states_2, axis=1, name="concat2")
+
+        h3 = tf.concat(
+            [
+                h2,
+                tf.reshape(self.batch_unique_count_placeholder, (-1, 1)),
+                tf.reduce_max(h2, axis=1, keepdims=True)
+            ],
+            axis=1,
+            name="concat3"
+        )
+        num_aux_feats = 2
+
+        #h_drop = tf.nn.dropout(state, keep_prob=0.8)
 
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
                 "W_ho",
-                (self.config.rnn_hidden_size, self.config.n_classes),
+                (layer_2_size * 2 + num_aux_feats, self.config.n_classes),
                 tf.float32,
                 tf.contrib.layers.xavier_initializer(),
                 trainable=True
@@ -959,84 +1083,27 @@ class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
                 tf.float32, tf.zeros_initializer(),
                 trainable=True
             )
-            pred = tf.matmul(state, self.W_ho) + self.b_o
+            pred = tf.matmul(h3, self.W_ho) + self.b_o
 
         return pred
 
+    def fit(self, sess, inputs, seq_length, unique_count, labels, lr):
+        feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
+                                          labels, self.config.dropout, lr)
 
-class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
-    def add_prediction_op(self):
-        """Adds the core transformation for this model which transforms a batch
-        of input data into a batch of predictions.
-
-        Calculates forward pass of RNN on input sequence of length Tx:
-        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
-        After, calculates models prediction from last cell's activation h_Tx:
-        h_drop = Dropout(h_Tx, dropout_rate)
-        pred = dot(h_drop, W_ho) + b_o
-
-        Returns:
-            pred: A tensor of shape (batch_size, n_classes)
-        """
-        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
-
-        rnn_cell = tf.nn.rnn_cell.LSTMCell(
-            num_units=self.config.rnn_hidden_size,
-            use_peepholes=False,
-            #cell_clip=None,
-            initializer=tf.contrib.layers.xavier_initializer(),
-            num_proj=None,
-            #proj_clip=None,
-            #forget_bias=1.0,
-            state_is_tuple=True,
-            #activation=None,
-            #reuse=None,
-            name="lstm",
-            dtype=tf.float32
+        loss, _, metric, summary = sess.run(
+            [self.loss, self.train_op, self.metric_update_op,
+             self.merged_summaries],
+            feed_dict
         )
 
-        '''rnn_cell_dropout = tf.nn.rnn_cell.DropoutWrapper(
-            rnn_cell,
-            input_keep_prob=1.0,
-            output_keep_prob=1.0,
-            state_keep_prob=0.8
-        )'''
+        return loss, metric, summary
 
-        outputs, state = tf.nn.dynamic_rnn(
-            cell=rnn_cell,
-            inputs=x_dropout,
-            sequence_length=self.batch_seq_length_placeholder,
-            dtype=tf.float32
-        )
-        state = tf.reshape(
-            tf.slice(state, [0, 0, 0], [1, -1, -1]),
-            (-1, self.config.rnn_hidden_size)
-        )
-
-        h_drop = tf.nn.dropout(state, keep_prob=1.0)
-        with tf.name_scope("classifier"):
-            self.W_ho = tf.get_variable(
-                "W_ho",
-                (self.config.rnn_hidden_size, self.config.n_classes),
-                tf.float32,
-                tf.contrib.layers.xavier_initializer(),
-                trainable=True
-            )
-            self.b_o = tf.get_variable(
-                "bo",
-                (1, self.config.n_classes),
-                tf.float32, tf.zeros_initializer(),
-                trainable=True
-            )
-            pred = tf.matmul(h_drop, self.W_ho) + self.b_o
-
-        return pred
 
 # Main
-def train_model():
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+def train_model(classifier, data_model):
     train_gen = data_model.train_batch_generator()
+    clr_for_epoch = utils.calc_cyclical_learn_rate(LOW_LR, UP_LR, STEP_SIZE)
 
     graph = tf.Graph()
     with graph.as_default():
@@ -1050,12 +1117,20 @@ def train_model():
     sess.run(init)
 
     for i in range(classifier.n_epochs):
-        inputs, seq_length, labels = next(train_gen)
-        loss, metric, summary = classifier.fit(sess, inputs, seq_length,
-                                               labels)
+        if i % LR_UPDATE_STEP == 0:
+            lr = clr_for_epoch(i)
+            print (f"learning_rate is. {lr}")
+
+        inputs, seq_length, unique_count, labels = next(train_gen)
+        loss, metric, summary = classifier.fit(
+            sess,
+            inputs, seq_length, unique_count, labels,
+            lr
+        )
+
         writer.add_summary(summary, i)
 
-        if i % SAVE_EPOCH_STEP == 0:
+        if i % SAVE_EPOCH_STEP == 0 and i != 0:
             print (f"Trained for {i} epochs")
             print (f"Train Loss/f1_score is {loss:.2f} / {metric:.2f}")
 
@@ -1073,10 +1148,7 @@ def train_model():
     return classifier.best_model_path
 
 
-def predict(path_prefix):
-    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-    classifier = SentenceClassifierSeq2SeqGRU(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
-
+def predict(path_prefix, classifier, data_model):
     graph = tf.Graph()
     with graph.as_default():
         classifier.build()
@@ -1099,5 +1171,9 @@ def predict(path_prefix):
 
 if __name__ == '__main__':
     QuoraQuestionsModelParser(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE).parse_all()
-    best_model_path = train_model()
-    predict(best_model_path)
+
+    data_model = QuoraQuestionsModelStreamer(DataConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+    classifier = SentenceClassifierSeq2SeqExtFeats(ModelConfig(), BATCH_SIZE, MAX_SEQ_LEN, EMBED_SIZE)
+
+    best_model_path = train_model(classifier, data_model)
+    predict(best_model_path, classifier, data_model)

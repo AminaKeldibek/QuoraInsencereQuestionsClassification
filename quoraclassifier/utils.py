@@ -70,7 +70,7 @@ def remove_nonascii(text):
 
 
 def clean_text(text):
-    remove_patterns = r"\\{2,}|\.{2,}|_"
+    remove_patterns = r"\\{2,}|\.{2,}|_|…"
     text = re.sub(remove_patterns, "", text)
 
     return text
@@ -78,7 +78,7 @@ def clean_text(text):
 
 def separate_punctuation(text):
     # copied from kaggle
-    puncts =  ['!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-',
+    puncts =  ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '-',
               '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^',
               '_', '`', '{', '|', '}', '~']
     for punct in puncts:
@@ -102,28 +102,43 @@ def remove_units(text):
 
 def replace_text(text):
     token_from = [
-        "cryptocurrencies", "Cryptocurrency", "Brexit", "brexit", "Redmi", "redmi", "Coinbase", "coinbase", "\.net", "OnePlus",
-        "Bhakts", "bhakts", "Qur'an", "qur'an", "anti-trump", "anti-Trump", "www.youtube.com/watch", "r-aping", "raaping"
-        "f\*\*k", "F'king", "sh\*t", "´", "i'am", "f.r.i.e.n.d.s", "ai/ml", "₹",
-        "²", "°", "zuckerburg", "demonetisation", "demonitisation", "Demonetization", "\^2", "c/c\+\+", "he's", "she's", "it's", "how's", "'s", "'ve", "'ll",
-        "won't", "Won't", "Can't", "n't", "'re", "'d", "Quorans", "UCEED", "Blockchain",
-        "GDPR", "BNBR", "Boruto", "ethereum", "DCEU", "IIEST", "SJWs", "Qoura", "LNMIIT",
-        "Upwork", "upwork", "Zerodha", "Doklam", "HackerRank", "altcoins", "altcoin", "Litecoin", "litecoin",
-        "Amazon.in", "NICMAR", "Vajiram", "\u200b", " adhaar", "Adhaar", "fortnite", "Trumpcare", "Quoras", "Tensorflow", "blockchains",
-        "Unacademy", "chsl"
+        "cryptocurrencies", "Cryptocurrency", "Brexit", "brexit", "Cryptocurrencies",
+        "Redmi", "redmi", "Coinbase", "coinbase", "\.net", "OnePlus", "Oneplus",
+        "Bhakts", "bhakts", "Qur'an", "qur'an", "anti-trump", "anti-Trump", "www.youtube.com/watch",
+        "r-aping", "raaping", "f\*\*k", "F'king", "sh\*t", "´", "i'am", "f.r.i.e.n.d.s", "ai/ml", "₹",
+        "²", "°", "zuckerburg", "demonetisation", "demonitisation", "Demonetization", "demonitization",
+        "\^2", "c/c\+\+", "he's", "she's", "it's", "how's", "'s", "'ve", "'ll",
+        "won't", "Won't", "Can't", "n't", "'re", "'d", "Quorans", "UCEED",
+        "Blockchain", "GDPR", "BNBR", "Boruto", "ethereum",
+        "DCEU", "IIEST", "SJWs", "Qoura", "LNMIIT", "Upwork", "upwork", "Zerodha",
+        "Doklam", "HackerRank", "altcoins", "altcoin", "Litecoin", "litecoin",
+        "Amazon.in", "NICMAR", "Vajiram", "\u200b", " adhaar", "Adhaar", "fortnite",
+        "Trumpcare", "Quoras", "Tensorflow", "blockchains",
+        "Unacademy", "unacademy", "Awdhesh", "chsl", "Adityanath", "squaredx",
+        "MUOET", "AlShamsi",
+        "eLitmus", "Jiren", "Beerus", "Ryzen", "Baahubali", "SRMJEE",
+        "SGSITS", "Binance", "Quoras", "aspdotnet", "TensorFlow", "tensorflow", "nanodegree", "Nanodegree",
+        "Erdoan", "Bitconnect", "Trumpism", "genderfluid"
     ]
 
     token_to = [
-        "cryptocurrency", "cryptocurrency", "Britain exit", "Britain exit", "Xiaomi smartphone", "Xiaomi smartphone", "Bitcoin",
-        "bitcoin", "dotnet", "BBK", "bhakt", "bhakt", "Quran", "Quran", "anti trump", "anti trump", "youtube",
+        "cryptocurrency", "cryptocurrency", "Britain exit", "Britain exit", "cryptocurrency",
+        "Xiaomi smartphone", "Xiaomi smartphone", "Bitcoin", "bitcoin", "dotnet", "BBK", "BBK",
+        "bhakt", "bhakt", "Quran", "Quran", "anti trump", "anti trump", "youtube",
         "raping", "raping", "fuck", "fuck", "shit", "'", "I am", 'friends', "AI", " Rupee",
-        " squared", " degrees", "zuckerberg", "demonetization", "demonetization", "demonetization", " squared", "c", "he is", "she is", "it is", "how is"," 's", " have", " will",
+        " squared", " degrees", "zuckerberg", "demonetization", "demonetization", "demonetization", "demonetization",
+        " squared", "c", "he is", "she is", "it is", "how is"," 's", " have", " will",
         "will not", "Will not", "can not", " not", " are", " would", "of Quora", "exam",
         "blockchain", "data protection", "be nice be respectful", "naruto", "Ethereum",
         "comics", "Indian Institutes", "SJW", "Quora", "LNM", "freelance", "freelance", "stock",
-        "Tibet", "algorithms", "bitcoin", "bitcoin", "bitcoin", "bitcoin", "Amazon", "institute",
-        "exam", " ", " aadhaar", "aadhaar", "Fortnite", "AHCA", "Quora", "DL", "blockchain",
-        "Indian Coursera", "CHSL"
+        "Tibet", "algorithms", "bitcoin", "bitcoin", "bitcoin", "bitcoin",
+        "Amazon", "institute", "exam", " ", " aadhaar", "aadhaar", "Fortnite",
+        "AHCA", "Quora", "DL", "blockchain",
+        "Indian Coursera", "Indian Coursera", "Indian Coursera", "CHSL", "Indian politician", "squared x",
+        "exam", "fashion holding",
+        "Indian recruitment company", "anime game", "anime game", "CPU", "Indian movie", "exam",
+        "Indian university", "bitcoin", "Quora", "ASP.NET", "DL", "DL", "online course", "online course",
+        "Erdogan", "cryptocurrency", "Trump", "gender fluid boy girl"
     ]
     for i in range(len(token_from)):
         text = re.sub(token_from[i], token_to[i], text)
@@ -132,9 +147,9 @@ def replace_text(text):
 
 
 def preprocess_text(text):
-    text = remove_nonascii(text)
-    text = clean_text(text)
     text = replace_text(text)
+    text = clean_text(text)
+    text = remove_nonascii(text)
     text = separate_punctuation(text)
     text = hide_numbers(text)
     text = remove_units(text)
@@ -159,3 +174,17 @@ def xavier_weight_init(shape):
     out = np.random.uniform(-lim, lim, shape)
 
     return out
+
+
+def calc_cyclical_learn_rate(lower_lr, upper_lr, step_size):
+    period = 2 * step_size
+    delta = upper_lr - lower_lr
+
+    def calc_clr_for_epoch(epoch_counter):
+        local_cycle = np.floor(1 + epoch_counter / period)
+        local_x = np.abs(epoch_counter / step_size - 2 * local_cycle + 1)
+        lr = lower_lr + delta * max(0, 1 - local_x)
+
+        return lr
+
+    return calc_clr_for_epoch

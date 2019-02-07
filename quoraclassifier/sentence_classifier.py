@@ -66,11 +66,16 @@ class SentenceClassifier():
         )
         self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
                                                            "batch_seq_length")
+        self.batch_unique_count_placeholder = tf.placeholder(tf.int32, (None, ),
+                                                           "batch_unique_count")
         self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
-        self.config.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+
+        self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+        self.lr_placeholder = tf.placeholder(tf.float32, (), "lr")
 
     def create_feed_dict(self, inputs_batch, batch_seq_length,
-                         labels_batch=None, dropout=1):
+                         batch_unique_count, labels_batch=None, dropout=1,
+                         lr=None):
         """Creates the feed_dict for training the given step.
         If label_batch is None, then no labels are added to feed_dict
 
@@ -85,10 +90,12 @@ class SentenceClassifier():
         feed_dict = dict()
         feed_dict[self.input_placeholder] = inputs_batch
         feed_dict[self.batch_seq_length_placeholder] = batch_seq_length
-        feed_dict[self.config.dropout_placeholder] = dropout
+        feed_dict[self.batch_unique_count_placeholder] = batch_unique_count
+        feed_dict[self.dropout_placeholder] = dropout
         if labels_batch is not None:
             feed_dict[self.labels_placeholder] = labels_batch
-
+        if lr is not None:
+            feed_dict[self.lr_placeholder] = lr
         return feed_dict
 
     def add_prediction_op(self):
@@ -163,9 +170,9 @@ class SentenceClassifier():
         self.loss_summary = tf.summary.scalar("loss_summary", self.loss)
         self.eval_summary = tf.summary.scalar("f1_summary", self.metric_update_op)
 
-    def fit(self, sess, inputs, seq_length, labels):
-        feed_dict = self.create_feed_dict(inputs, seq_length, labels,
-                                          self.config.dropout)
+    def fit(self, sess, inputs, seq_length, unique_count, labels):
+        feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
+                                          labels, self.config.dropout)
 
         loss, _, metric, summary = sess.run(
             [self.loss, self.train_op, self.metric_update_op,
@@ -183,9 +190,9 @@ class SentenceClassifier():
         score = None
         pred_labels = np.array([], dtype=np.intp)
         labels = np.array([], dtype=np.intp)
-        for inputs, seq_length, batch_labels in data_gen:
-            feed_dict = self.create_feed_dict(inputs, seq_length, batch_labels,
-                                              self.config.dropout)
+        for inputs, seq_length, unique_count, batch_labels in data_gen:
+            feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
+                                              batch_labels, self.config.dropout)
             pred = sess.run(self.pred, feed_dict)
             pred = softmax(pred, -1)[:, 1]
             if threshold is not None:
@@ -204,8 +211,8 @@ class SentenceClassifier():
         it binarizes predictions, otherwise returns softmax output.
         """
         pred_labels = np.array([], dtype=np.intp)
-        for inputs, seq_length in data_gen:
-            feed_dict = self.create_feed_dict(inputs, seq_length,
+        for inputs, seq_length, unique_count in data_gen:
+            feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
                                               dropout=self.config.dropout)
             pred = sess.run(self.pred, feed_dict)
             pred = softmax(pred, -1)[:, 1]
@@ -241,6 +248,9 @@ class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
+
+        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+
         rnn_cell = tf.nn.rnn_cell.GRUCell(
             self.config.rnn_hidden_size,
             activation='relu',
@@ -259,13 +269,13 @@ class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
 
         outputs, state = tf.nn.dynamic_rnn(
             cell=rnn_cell,
-            inputs=self.input_placeholder,
+            inputs=x_dropout,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
             #initial_state=initial_state
         )
 
-        #h_drop = tf.nn.dropout(state, keep_prob=1.0)
+        h_drop = tf.nn.dropout(state, keep_prob=0.8)
 
         with tf.name_scope("classifier"):
             self.W_ho = tf.get_variable(
@@ -281,9 +291,200 @@ class SentenceClassifierSeq2SeqGRU(SentenceClassifier):
                 tf.float32, tf.zeros_initializer(),
                 trainable=True
             )
-            pred = tf.matmul(state, self.W_ho) + self.b_o
+            pred = tf.matmul(h_drop, self.W_ho) + self.b_o
 
         return pred
+
+
+class SentenceClassifierSeq2SeqExtFeats(SentenceClassifier):
+    def add_placeholders(self):
+        """Generates placeholder variables to represent the input tensors.
+
+        Adds following nodes to the computational graph:
+
+        input_placeholder: Input placeholder tensor of shape (None,
+                           max_seq_len, embedding_size), type tf.float32
+        labels_placeholder: Labels placeholder tensor of shape (None),
+                            type tf.int32
+        dropout_placeholder: Dropout value placeholder of shape (), i.e.
+                             scalar, type tf.float32
+        """
+        self.input_placeholder = tf.placeholder(
+            tf.float32,
+            (None, self.max_seq_len, self.embedding_size),
+            "input"
+        )
+        self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
+                                                           "batch_seq_length")
+        self.batch_unique_count_placeholder = tf.placeholder(tf.float32, (None, ),
+                                                           "batch_unique_count")
+        self.labels_placeholder = tf.placeholder(tf.int32, (None, ), "labels")
+
+        self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+        self.lr_placeholder = tf.placeholder(tf.float32, (), "dropout")
+
+    def add_training_op(self, loss, global_step):
+        """Creates an optimizer and applies the gradients to all trainable
+        variables.
+        Args:
+            loss: Loss tensor, from cross_entropy_loss.
+        Returns:
+            train_op: The Op for training.
+        """
+
+        # Calculate and clip gradients
+        params = tf.trainable_variables()
+        gradients = tf.gradients(loss, params)
+        clipped_gradients, _ = tf.clip_by_global_norm(
+            gradients,
+            self.config.max_gradient_norm
+        )
+
+        # Optimization
+        optimizer = tf.train.AdamOptimizer(self.lr_placeholder)
+        optimizer = optimizer.apply_gradients(zip(clipped_gradients, params),
+                                              global_step, "adam_optimizer")
+
+        return optimizer
+
+    def add_prediction_op(self):
+        """Adds the core transformation for this model which transforms a batch
+        of input data into a batch of predictions.
+
+        Calculates forward pass of RNN on input sequence of length Tx:
+        h_t = sigmoid(dot(W_hx, x_t) + dot(W_hh, h_(t-1) + b_t)
+        After, calculates models prediction from last cell's activation h_Tx:
+        h_drop = Dropout(h_Tx, dropout_rate)
+        pred = dot(h_drop, W_ho) + b_o
+
+        Returns:
+            pred: A tensor of shape (batch_size, n_classes)
+        """
+
+        #x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+        layer_1_size = 150
+        layer_2_size = 25
+        num_aux_feats = 4
+
+        rnn_cell_layer_1_fwd = tf.nn.rnn_cell.GRUCell(
+            layer_1_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_1",
+            dtype=tf.float32
+        )
+
+        rnn_cell_layer_1_bwd = tf.nn.rnn_cell.GRUCell(
+            layer_1_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_1",
+            dtype=tf.float32
+        )
+
+        rnn_cell_layer_2_fwd = tf.nn.rnn_cell.GRUCell(
+            layer_2_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_2",
+            dtype=tf.float32
+        )
+
+        rnn_cell_layer_2_bwd = tf.nn.rnn_cell.GRUCell(
+            layer_2_size,
+            activation='relu',
+            kernel_initializer=tf.contrib.layers.xavier_initializer(),
+            bias_initializer=tf.zeros_initializer(),
+            name="gru_2",
+            dtype=tf.float32
+        )
+
+        outputs_1, states_1 = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_layer_1_fwd,
+            cell_bw=rnn_cell_layer_1_bwd,
+            inputs=self.input_placeholder,
+            sequence_length=self.batch_seq_length_placeholder,
+            dtype=tf.float32
+        )
+        h1 = tf.concat(outputs_1, axis=2, name="concat1")
+
+        outputs_2, states_2 = tf.nn.bidirectional_dynamic_rnn(
+            cell_fw=rnn_cell_layer_2_fwd,
+            cell_bw=rnn_cell_layer_2_bwd,
+            inputs=h1,
+            dtype=tf.float32
+        )
+        h2 = tf.concat(states_2, axis=1, name="concat2")
+
+        h3 = tf.concat(
+            [
+                h2,
+                tf.reshape(self.batch_unique_count_placeholder, (-1, 1)),
+                tf.reduce_max(h2, axis=1, keepdims=True)
+            ],
+            axis=1,
+            name="concat3"
+        )
+        num_aux_feats = 2
+
+        #h_drop = tf.nn.dropout(state, keep_prob=0.8)
+
+        with tf.name_scope("classifier"):
+            self.W_ho = tf.get_variable(
+                "W_ho",
+                (layer_2_size * 2 + num_aux_feats, self.config.n_classes),
+                tf.float32,
+                tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+            self.b_o = tf.get_variable(
+                "bo",
+                (1, self.config.n_classes),
+                tf.float32, tf.zeros_initializer(),
+                trainable=True
+            )
+            pred = tf.matmul(h3, self.W_ho) + self.b_o
+
+        return pred
+
+    def fit(self, sess, inputs, seq_length, unique_count, labels, lr):
+        feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
+                                          labels, self.config.dropout, lr)
+
+        loss, _, metric, summary = sess.run(
+            [self.loss, self.train_op, self.metric_update_op,
+             self.merged_summaries],
+            feed_dict
+        )
+
+        return loss, metric, summary
+
+    def evaluate(self, sess, data_gen, threshold=None):
+        """Evaluates model on dev dataset and returns f1_score and predicted
+        labels. If threshold is provided, it binarizes predictions, otherwise
+        returns softmax output.
+        """
+        score = None
+        pred_labels = np.array([], dtype=np.intp)
+        labels = np.array([], dtype=np.intp)
+        for inputs, seq_length, unique_count, batch_labels in data_gen:
+            feed_dict = self.create_feed_dict(inputs, seq_length, unique_count,
+                                              batch_labels, self.config.dropout)
+            pred = sess.run(self.pred, feed_dict)
+            pred = softmax(pred, -1)[:, 1]
+            if threshold is not None:
+                pred = utils.binarize(pred, threshold)
+
+            pred_labels = np.concatenate((pred_labels, pred))
+            labels = np.concatenate((labels, batch_labels))
+
+        if threshold is not None:
+            score = f1_score(labels, pred_labels)
+
+        return score, pred_labels, labels
 
 
 class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
@@ -300,6 +501,8 @@ class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
         Returns:
             pred: A tensor of shape (batch_size, n_classes)
         """
+        x_dropout = tf.keras.layers.SpatialDropout1D(0.4).apply(self.input_placeholder)
+
         rnn_cell = tf.nn.rnn_cell.LSTMCell(
             num_units=self.config.rnn_hidden_size,
             use_peepholes=False,
@@ -324,7 +527,7 @@ class SentenceClassifierSeq2SeqLSTM(SentenceClassifier):
 
         outputs, state = tf.nn.dynamic_rnn(
             cell=rnn_cell,
-            inputs=self.input_placeholder,
+            inputs=x_dropout,
             sequence_length=self.batch_seq_length_placeholder,
             dtype=tf.float32
         )
@@ -600,7 +803,7 @@ class SentenceClassifierSeq2SeqGRUBinary(SentenceClassifier):
         self.batch_seq_length_placeholder = tf.placeholder(tf.int32, (None, ),
                                                            "batch_seq_length")
         self.labels_placeholder = tf.placeholder(tf.float32, (None, ), "labels")
-        self.config.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
+        self.dropout_placeholder = tf.placeholder(tf.float32, (), "dropout")
 
 
     def add_prediction_op(self):
