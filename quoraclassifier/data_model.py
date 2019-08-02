@@ -495,6 +495,38 @@ class QuoraQuestionsModelStreamer(QuoraQuestionsModel):
         fi.close()
 
 
+class OneInputModel(QuoraQuestionsModel):
+    def __init__(self, data_config, batch_size, max_seq_len, embedding_size):
+        super().__init__(data_config, batch_size, max_seq_len, embedding_size)
+        self.load_embedding()
+        self.load_dicts()
+
+        self.unk_idx = self.word2idx.get(self.config.unknown_token)
+
+    def text2idx(self, input_text):
+        tokens = utils.preprocess_text(input_text)
+
+        if self.config.include_unknown:
+            idxs = [self.word2idx.get(token, self.unk_idx) for token in
+                    tokens]
+        else:
+            idxs = [self.word2idx.get(token) for token in tokens]
+            idxs = [idx for idx in idxs if idx]
+
+        return np.array(idxs)
+
+    def preprocess_text_input(self, input_text):
+        sequence = np.zeros((1, self.max_seq_len, self.embedding_size))
+
+        idxs = self.text2idx(input_text)
+
+        seq_length = idxs.shape[0]
+        unique_count = np.unique(idxs).shape[0]
+        sequence[0, 0:seq_length, :] = self.embedding[idxs, :]
+
+        return sequence, np.array([seq_length]), np.array([unique_count])
+
+
 def main_parser():
     data_model = QuoraQuestionsModelParser(DataConfig(), 100, 70, 300)
     data_model.parse_all()
