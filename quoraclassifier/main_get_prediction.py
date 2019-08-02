@@ -31,7 +31,7 @@ def predict(path_prefix, classifier, input_data, threshold=0.5):
 
 def main():
     input_text = "I love sunny weather."
-    input_text = ""
+    input_text = "I hate Trump"
     optimal_treshold = 0.6
     best_model_path = "../saved_models/classifier.ckpt-4001"
 

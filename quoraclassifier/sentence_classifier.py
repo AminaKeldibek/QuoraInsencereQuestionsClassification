@@ -223,6 +223,22 @@ class SentenceClassifier():
 
         return pred_labels.astype(np.int8)
 
+    def predict_one_sample(self, sess, input_data, threshold=None):
+        pred_labels = np.array([], dtype=np.intp)
+        sequence, seq_length, unique_count = input_data
+
+        feed_dict = self.create_feed_dict(sequence, seq_length, unique_count,
+                                          dropout=self.config.dropout)
+        pred = sess.run(self.pred, feed_dict)
+        pred = softmax(pred, -1)[:, 1]
+        if threshold is not None:
+            pred = utils.binarize(pred, self.threshold)
+
+        pred_labels = np.concatenate((pred_labels, pred))
+
+        return pred_labels.astype(np.int8)
+
+
     def save_best(self, sess, score):
         """Saves best model during train."""
         if score > self.best_score:
