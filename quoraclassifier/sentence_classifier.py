@@ -238,7 +238,6 @@ class SentenceClassifier():
 
         return pred_labels.astype(np.int8)
 
-
     def save_best(self, sess, score):
         """Saves best model during train."""
         if score > self.best_score:
